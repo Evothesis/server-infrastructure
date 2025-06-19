@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Test Site - Home</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            line-height: 1.6;
+        }
+        nav { 
+            background: #f0f0f0; 
+            padding: 15px; 
+            margin-bottom: 20px; 
+            border-radius: 5px;
+        }
+        nav a { 
+            margin-right: 20px; 
+            text-decoration: none; 
+            color: #333; 
+            font-weight: bold;
+        }
+        nav a:hover { color: #007cba; }
+        .cta-button { 
+            background: #007cba; 
+            color: white; 
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 5px;
+            cursor: pointer; 
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        .cta-button:hover { background: #005a8a; }
+        .content { 
+            min-height: 2000px; /* Long page for scroll testing */
+        }
+        .section {
+            background: #f9f9f9;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .copy-text {
+            background: #ffffcc;
+            padding: 10px;
+            border-left: 4px solid #007cba;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/products.html">Products</a>
+        <a href="/contact.html">Contact</a>
+        <a href="/products.html?utm_source=google&utm_medium=cpc&utm_campaign=test">UTM Test Link</a>
+    </nav>
+    
+    <h1>Welcome to Our Analytics Test Site</h1>
+    <p>This website is designed to test our analytics tracking system with real user interactions.</p>
+    
+    <div class="section">
+        <h2>Test Click Tracking</h2>
+        <button class="cta-button" onclick="alert('Primary CTA clicked!')">
+            Primary Call-to-Action
+        </button>
+        <button class="cta-button" onclick="alert('Secondary action!')">
+            Secondary Button
+        </button>
+        <a href="/products.html" class="cta-button" style="text-decoration: none; display: inline-block;">
+            View Products
+        </a>
+    </div>
+
+    <div class="section">
+        <h2>Test Text Selection/Copy</h2>
+        <div class="copy-text">
+            <p><strong>Try selecting and copying this text:</strong></p>
+            <p>This is a sample paragraph designed for testing text selection tracking. 
+            Select this text and copy it (Ctrl+C) to see if the copy event is being tracked properly. 
+            The analytics system should capture text selection events when users copy content 
+            that's longer than 10 characters.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Test File Downloads</h2>
+        <p>These links simulate file downloads:</p>
+        <a href="/fake-document.pdf" onclick="alert('PDF download tracked!'); return false;">
+            📄 Download PDF Report
+        </a><br><br>
+        <a href="/fake-image.jpg" onclick="alert('Image download tracked!'); return false;">
+            🖼️ Download Image
+        </a><br><br>
+        <a href="/fake-data.zip" onclick="alert('ZIP download tracked!'); return false;">
+            📦 Download Data Package
+        </a>
+    </div>
+    
+    <div class="content">
+        <h2>Scroll Down to Test Scroll Tracking</h2>
+        <p>Keep scrolling to test the scroll depth milestones (25%, 50%, 75%, 100%).</p>
+        
+        <div style="height: 400px; background: linear-gradient(45deg, #f0f0f0, #e0e0e0); margin: 20px 0; display: flex; align-items: center; justify-content: center;">
+            <h3>25% Scroll Milestone Area</h3>
+        </div>
+        
+        <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+        
+        <div style="height: 400px; background: linear-gradient(45deg, #e0e0e0, #d0d0d0); margin: 20px 0; display: flex; align-items: center; justify-content: center;">
+            <h3>50% Scroll Milestone Area</h3>
+        </div>
+        
+        <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident.</p>
+        
+        <div style="height: 400px; background: linear-gradient(45deg, #d0d0d0, #c0c0c0); margin: 20px 0; display: flex; align-items: center; justify-content: center;">
+            <h3>75% Scroll Milestone Area</h3>
+        </div>
+        
+        <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam.</p>
+        
+        <div style="height: 400px; background: linear-gradient(45deg, #c0c0c0, #b0b0b0); margin: 20px 0; display: flex; align-items: center; justify-content: center;">
+            <h3>Almost at 100%!</h3>
+        </div>
+        
+        <div style="background: #007cba; color: white; padding: 20px; text-align: center; border-radius: 5px;">
+            <h2>🎉 You reached the bottom! 100% scroll milestone achieved.</h2>
+        </div>
+    </div>
+
+    <!-- Analytics Pixel -->
+    <script src="/js/tracking.js"></script>
+</body>
+</html>
