@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact - Analytics Test Site</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        nav { background: #f0f0f0; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        nav a { margin-right: 20px; text-decoration: none; color: #333; font-weight: bold; }
+        nav a:hover { color: #007cba; }
+        .contact-info { background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        form { background: #f9f9f9; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        input, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+        input[type="submit"] { background: #007cba; color: white; cursor: pointer; }
+        input[type="submit"]:hover { background: #005a8a; }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/products.html">Products</a>
+        <a href="/contact.html">Contact</a>
+        <a href="/products.html?utm_source=google&utm_medium=cpc&utm_campaign=test">UTM Test Link</a>
+    </nav>
+    
+    <h1>Contact Us</h1>
+    
+    <div class="contact-info">
+        <h3>Get in Touch</h3>
+        <p><strong>Email:</strong> hello@testsite.com</p>
+        <p><strong>Phone:</strong> (555) 123-4567</p>
+        <p><strong>Address:</strong> 123 Test Street, Analytics City, AC 12345</p>
+    </div>
+
+    <form onsubmit="alert('Contact form submitted!'); return false;">
+        <h3>Send us a Message</h3>
+        
+        <label for="contact-name">Name:</label>
+        <input type="text" id="contact-name" name="name" placeholder="Your Name" required>
+        
+        <label for="contact-email">Email:</label>
+        <input type="email" id="contact-email" name="email" placeholder="your.email@example.com" required>
+        
+        <label for="subject">Subject:</label>
+        <input type="text" id="subject" name="subject" placeholder="What's this about?">
+        
+        <label for="contact-message">Message:</label>
+        <textarea id="contact-message" name="message" placeholder="Your message here..." rows="6" required></textarea>
+        
+        <input type="submit" value="Send Message">
+    </form>
+
+    <!-- Analytics Pixel -->
+    <script src="/js/tracking.js"></script>
+</body>
+</html>

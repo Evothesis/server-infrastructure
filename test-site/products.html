@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Products - Analytics Test Site</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        nav { background: #f0f0f0; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        nav a { margin-right: 20px; text-decoration: none; color: #333; font-weight: bold; }
+        nav a:hover { color: #007cba; }
+        .product { border: 1px solid #ddd; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        .product button { background: #007cba; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        form { background: #f9f9f9; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        input, textarea, select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+        input[type="submit"] { background: #007cba; color: white; cursor: pointer; }
+        input[type="submit"]:hover { background: #005a8a; }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/products.html">Products</a>
+        <a href="/contact.html">Contact</a>
+        <a href="/products.html?utm_source=google&utm_medium=cpc&utm_campaign=test">UTM Test Link</a>
+    </nav>
+    
+    <h1>Our Products</h1>
+    
+    <div class="product">
+        <h3>Amazing Widget Pro</h3>
+        <p>The best widget you'll ever use. Features advanced technology and premium design.</p>
+        <p><strong>Price: $199</strong></p>
+        <button onclick="alert('Amazing Widget Pro added to cart!')">Add to Cart</button>
+        <button onclick="alert('Widget Pro details viewed!')">View Details</button>
+    </div>
+    
+    <div class="product">
+        <h3>Super Gadget Deluxe</h3>
+        <p>A gadget that does everything you need and more. Perfect for professionals.</p>
+        <p><strong>Price: $299</strong></p>
+        <button onclick="alert('Super Gadget Deluxe added to cart!')">Add to Cart</button>
+        <button onclick="alert('Gadget Deluxe details viewed!')">View Details</button>
+    </div>
+
+    <div class="product">
+        <h3>Basic Tool Kit</h3>
+        <p>Essential tools for getting started. Great value for beginners.</p>
+        <p><strong>Price: $49</strong></p>
+        <button onclick="alert('Basic Tool Kit added to cart!')">Add to Cart</button>
+        <button onclick="alert('Tool Kit details viewed!')">View Details</button>
+    </div>
+
+    <!-- Test form for form tracking -->
+    <form onsubmit="alert('Product inquiry form submitted!'); return false;">
+        <h3>Product Inquiry Form</h3>
+        <p>Fill out this form to test form submission tracking:</p>
+        
+        <label for="name">Name:</label>
+        <input type="text" id="name" name="name" placeholder="Your Full Name" required>
+        
+        <label for="email">Email:</label>
+        <input type="email" id="email" name="email" placeholder="your.email@example.com" required>
+        
+        <label for="phone">Phone:</label>
+        <input type="tel" id="phone" name="phone" placeholder="(555) 123-4567">
+        
+        <label for="product">Interested Product:</label>
+        <select id="product" name="product">
+            <option value="">Select a product...</option>
+            <option value="amazing-widget">Amazing Widget Pro</option>
+            <option value="super-gadget">Super Gadget Deluxe</option>
+            <option value="basic-toolkit">Basic Tool Kit</option>
+        </select>
+        
+        <label for="budget">Budget Range:</label>
+        <select id="budget" name="budget">
+            <option value="">Select budget...</option>
+            <option value="under-100">Under $100</option>
+            <option value="100-200">$100 - $200</option>
+            <option value="200-300">$200 - $300</option>
+            <option value="over-300">Over $300</option>
+        </select>
+        
+        <label for="message">Message:</label>
+        <textarea id="message" name="message" placeholder="Tell us about your specific needs..." rows="4"></textarea>
+        
+        <input type="submit" value="Send Inquiry">
+    </form>
+
+    <!-- Analytics Pixel -->
+    <script src="/js/tracking.js"></script>
+</body>
+</html>
