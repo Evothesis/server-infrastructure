@@ -4,17 +4,27 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import json
 import logging
+import os
 from ipaddress import ip_address, AddressValueError
 
-from .database import engine, get_db
+from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
-
-# Create tables
-Base.metadata.create_all(bind=engine)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Debug: Print database connection info
+logger.info(f"DATABASE_URL from env: {os.getenv('DATABASE_URL', 'NOT SET')}")
+logger.info(f"Actual DATABASE_URL being used: {DATABASE_URL}")
+
+# Create tables
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created successfully")
+except Exception as e:
+    logger.error(f"Failed to create database tables: {e}")
+    raise
 
 app = FastAPI(title="Analytics API", version="1.0.0")
 
