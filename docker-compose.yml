@@ -25,7 +25,7 @@ services:
       - "5432:5432"  # Exposed for GUI tools like pgAdmin, DBeaver, etc.
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # Initial schema
+      - ./database:/docker-entrypoint-initdb.d/  # Mount all SQL files in order
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
