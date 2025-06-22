@@ -13,7 +13,7 @@ A self-hosted analytics platform migrated from AWS serverless architecture to a 
        │
        ▼
 ┌─────────────┐
-│ Test Site   │
+│ Demo Site   │
 │ tracking.js │
 │ Pixel       │
 └─────────────┘
@@ -21,7 +21,7 @@ A self-hosted analytics platform migrated from AWS serverless architecture to a 
 
 ### Components
 
-- **Nginx**: Reverse proxy serving static test site and routing API requests
+- **Nginx**: Reverse proxy serving static demo site and routing API requests
 - **FastAPI**: Event collection API with real-time processing and health checks
 - **PostgreSQL**: Primary database with JSONB support for flexible event storage
 - **Tracking Pixel**: JavaScript library for comprehensive behavioral tracking
@@ -55,7 +55,7 @@ A self-hosted analytics platform migrated from AWS serverless architecture to a 
    # Check API health
    curl http://localhost:8000/health
    
-   # Visit test site
+   # Visit demo site
    open http://localhost
    ```
 
@@ -152,7 +152,7 @@ fetch('/collect', {
 
 ### Tracking Pixel Configuration
 
-Edit `test-site/js/tracking.js` to customize tracking behavior:
+Edit `tracking/js/tracking.js` to customize tracking behavior:
 
 ```javascript
 var config = {
@@ -247,7 +247,7 @@ curl http://localhost:8000/events/count
 
 ### Test Data Generation
 
-Visit the test site at `http://localhost` and interact with:
+Visit the demo site at `http://localhost` and interact with:
 - Navigation between pages
 - Form submissions
 - Button clicks and link clicks
@@ -320,7 +320,7 @@ cd api && alembic upgrade head
 
 ### Adding New Event Types
 
-1. **Update tracking pixel** (`test-site/js/tracking.js`)
+1. **Update tracking pixel** (`tracking/js/tracking.js`)
 2. **Add API processing** (`api/app/main.py`)
 3. **Create analytics table** if needed (`database/`)
 4. **Update ETL pipeline** for new event type
@@ -336,7 +336,7 @@ cd api && alembic upgrade head
 
 - [Database Schema](database/README.md) - Detailed database documentation
 - [API Reference](api/README.md) - FastAPI endpoint documentation
-- [Tracking Pixel](test-site/README.md) - JavaScript library documentation
+- [Tracking Pixel](tracking/README.md) - JavaScript library documentation
 
 ## 🤝 Contributing
 
