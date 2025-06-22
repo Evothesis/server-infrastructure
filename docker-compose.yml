@@ -39,7 +39,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./test-site:/usr/share/nginx/html:ro  # Serve test website
+      - ./tracking:/usr/share/nginx/html:ro  # Updated: serve tracking demo site
     depends_on:
       - fastapi
     restart: unless-stopped

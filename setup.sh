@@ -113,12 +113,12 @@ else
     exit 1
 fi
 
-# Test the test website
-echo "🔍 Testing test website..."
+# Test the demo website
+echo "🔍 Testing demo website..."
 if curl -s http://localhost/ | grep -q "Analytics Test Site"; then
-    echo "✅ Test website is accessible"
+    echo "✅ Demo website is accessible"
 else
-    echo "❌ Test website is not accessible"
+    echo "❌ Demo website is not accessible"
     exit 1
 fi
 
@@ -129,7 +129,7 @@ echo ""
 echo "📊 Services Status:"
 echo "   • PostgreSQL:  http://localhost:5432"
 echo "   • FastAPI:     http://localhost:8000"
-echo "   • Test Site:   http://localhost"
+echo "   • Demo Site:   http://localhost"
 echo "   • API Docs:    http://localhost:8000/docs"
 echo ""
 echo "🔧 Management Commands:"
@@ -145,4 +145,6 @@ echo ""
 echo "📚 For detailed documentation, see:"
 echo "   • Project: README.md"
 echo "   • Database: database/README.md"
+echo "   • API: api/README.md"
+echo "   • Tracking: tracking/README.md"
 echo ""
