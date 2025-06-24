@@ -369,15 +369,12 @@ var getSiteId = function() {
 
 ### Manual Testing Procedures
 
+**Important**: Use a real web browser for testing, as command-line tools like `curl` or PowerShell's `Invoke-WebRequest` do not execute JavaScript and will not trigger the tracking pixel.
+
 **1. Basic Page View Testing**
 ```bash
-# 1. Visit homepage
-open http://localhost
-
-# 2. Check console logs
-# Look for: "[Tracking] Initializing analytics..."
-# Look for: "[Tracking] Session ID: sess_..."
-
+# 1. Visit homepage in browser: http://localhost
+# 2. Check console logs for tracking initialization
 # 3. Verify event collection
 curl http://localhost:8000/events/recent
 ```
