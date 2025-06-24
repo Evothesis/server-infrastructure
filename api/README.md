@@ -146,6 +146,15 @@ GET /etl/status
 
 # Get recent processed sessions
 GET /etl/recent-sessions?limit=5
+
+# Process specific event type
+POST /etl/process/pageview?batch_size=1000
+
+# Calculate daily metrics
+POST /etl/calculate-daily-metrics?target_date=2025-06-24
+
+# Clean up old data
+POST /etl/cleanup?retention_days=90
 ```
 
 ## ⚙️ Configuration

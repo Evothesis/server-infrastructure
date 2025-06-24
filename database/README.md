@@ -308,15 +308,18 @@ WHERE session_start > NOW() - INTERVAL '30 days'
 GROUP BY site_id, referrer_type;
 ```
 
-## 🔄 ETL Pipeline (Future: 03_procedures.sql)
+## 🔄 ETL Pipeline (03_etl_procedures.sql)
 
 ### Processing Flow
 
+The ETL pipeline transforms raw events from `events_log` into structured analytics tables through these steps:
+
 1. **Raw Event Processing** (`events_log` → Analytics Tables)
-   - Extract pageviews from `pageview` events
-   - Process batched events into individual `user_events`
-   - Create/update sessions based on session lifecycle
-   - Calculate time-on-page from sequential pageviews
+   - Extract pageviews from `pageview` events and create/update sessions
+   - Process page exits to calculate time-on-page and session end times
+   - Process batched events into individual `user_events` records
+   - Extract form submissions with automatic PII redaction
+   - Calculate session metrics (duration, bounce status, pageview counts)
 
 2. **Session Aggregation**
    - Update session metrics (duration, page count, bounce status)
@@ -327,6 +330,41 @@ GROUP BY site_id, referrer_type;
    - Roll up session data into daily summaries
    - Calculate bounce rates, average session duration
    - Segment traffic by source type
+
+### ETL Functions
+
+```sql
+-- Process individual event types
+SELECT process_pageview_events(1000);
+SELECT process_page_exit_events(1000);
+SELECT process_batch_events(1000);
+SELECT process_form_submit_events(1000);
+
+-- Update session metrics
+SELECT update_session_metrics(1000);
+
+-- Run complete pipeline
+SELECT * FROM run_etl_pipeline(1000);
+
+-- Generate daily metrics
+SELECT calculate_daily_metrics('2025-06-24');
+
+-- Clean up old processed events
+SELECT cleanup_processed_events(90);
+```
+
+### Usage via API
+
+```bash
+# Run complete ETL pipeline
+curl -X POST http://localhost:8000/etl/run-sync
+
+# Check processing status
+curl http://localhost:8000/etl/status
+
+# View processed sessions
+curl http://localhost:8000/etl/recent-sessions
+```
 
 ### Planned Stored Procedures
 

@@ -243,9 +243,11 @@ docker-compose exec postgres psql -U postgres -c "
 curl http://localhost:8000/events/count
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Test Data Generation
+
+**Important**: Use a real web browser (not command-line tools) to generate analytics events, as the JavaScript tracking pixel requires browser execution.
 
 Visit the demo site at `http://localhost` and interact with:
 - Navigation between pages
@@ -264,6 +266,12 @@ curl -X POST http://localhost:8000/collect \
 
 # Check event was stored
 curl http://localhost:8000/events/recent
+
+# Process events with ETL pipeline
+curl -X POST http://localhost:8000/etl/run-sync
+
+# View processed analytics data
+curl http://localhost:8000/etl/recent-sessions
 ```
 
 ## 📈 Migration from AWS
