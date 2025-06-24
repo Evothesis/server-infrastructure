@@ -312,6 +312,66 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ==================================================
+-- SESSION METRICS CALCULATION
+-- ==================================================
+
+-- Update session metrics (duration, bounce status, pageview counts)
+CREATE OR REPLACE FUNCTION update_session_metrics(batch_size INTEGER DEFAULT 1000)
+RETURNS INTEGER AS $$
+DECLARE
+    processed_count INTEGER := 0;
+    session_rec RECORD;
+    pageview_count_val INTEGER;
+    event_count_val INTEGER;
+    bounce_status BOOLEAN;
+    duration_val INTEGER;
+BEGIN
+    -- Find sessions that need metrics updates
+    FOR session_rec IN
+        SELECT DISTINCT s.session_id
+        FROM user_sessions s
+        WHERE s.updated_at >= NOW() - INTERVAL '1 hour'
+           OR s.duration_seconds IS NULL
+           OR s.pageview_count = 0
+        LIMIT batch_size
+    LOOP
+        -- Count pageviews for this session
+        SELECT COUNT(*) INTO pageview_count_val
+        FROM pageviews 
+        WHERE session_id = session_rec.session_id;
+
+        -- Count events for this session
+        SELECT COUNT(*) INTO event_count_val
+        FROM user_events 
+        WHERE session_id = session_rec.session_id;
+
+        -- Calculate bounce status (single pageview session)
+        bounce_status := (pageview_count_val <= 1);
+
+        -- Calculate duration if session has ended
+        SELECT EXTRACT(EPOCH FROM (session_end - session_start))::INTEGER INTO duration_val
+        FROM user_sessions 
+        WHERE session_id = session_rec.session_id 
+        AND session_end IS NOT NULL;
+
+        -- Update session with calculated metrics
+        UPDATE user_sessions 
+        SET 
+            pageview_count = pageview_count_val,
+            event_count = event_count_val,
+            bounce = bounce_status,
+            duration_seconds = duration_val,
+            updated_at = NOW()
+        WHERE session_id = session_rec.session_id;
+
+        processed_count := processed_count + 1;
+    END LOOP;
+
+    RETURN processed_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==================================================
 -- MASTER ETL PROCEDURE
 -- ==================================================
 
@@ -326,45 +386,40 @@ DECLARE
     start_time TIMESTAMPTZ;
     step_result INTEGER;
 BEGIN
-    -- Process page exit events
+    -- Step 1: Process pageviews (creates sessions and pageview records)
+    start_time := clock_timestamp();
+    SELECT process_pageview_events(batch_size) INTO step_result;
+    RETURN QUERY SELECT 'process_pageview_events'::TEXT, step_result, clock_timestamp() - start_time;
+
+    -- Step 2: Process page exits (updates session end times)
     start_time := clock_timestamp();
     SELECT process_page_exit_events(batch_size) INTO step_result;
     RETURN QUERY SELECT 'process_page_exit_events'::TEXT, step_result, clock_timestamp() - start_time;
 
-    -- Process batch events
+    -- Step 3: Process batch events (user interactions)
     start_time := clock_timestamp();
     SELECT process_batch_events(batch_size) INTO step_result;
     RETURN QUERY SELECT 'process_batch_events'::TEXT, step_result, clock_timestamp() - start_time;
 
-    -- Process form submit events
+    -- Step 4: Process form submissions
     start_time := clock_timestamp();
     SELECT process_form_submit_events(batch_size) INTO step_result;
     RETURN QUERY SELECT 'process_form_submit_events'::TEXT, step_result, clock_timestamp() - start_time;
+
+    -- Step 5: Update session metrics
+    start_time := clock_timestamp();
+    SELECT update_session_metrics(batch_size) INTO step_result;
+    RETURN QUERY SELECT 'update_session_metrics'::TEXT, step_result, clock_timestamp() - start_time;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- ==================================================
--- CLEANUP PROCEDURES
+-- DAILY METRICS CALCULATION
 -- ==================================================
-
--- Clean up old processed events
-CREATE OR REPLACE FUNCTION cleanup_processed_events(retention_days INTEGER DEFAULT 90)
-RETURNS INTEGER AS $
-DECLARE
-    deleted_count INTEGER;
-BEGIN
-    DELETE FROM events_log 
-    WHERE processed_at IS NOT NULL 
-    AND processed_at < NOW() - (retention_days || ' days')::INTERVAL;
-    
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
-END;
-$ LANGUAGE plpgsql;
 
 -- Calculate daily metrics for a specific date
 CREATE OR REPLACE FUNCTION calculate_daily_metrics(target_date DATE DEFAULT CURRENT_DATE - 1)
-RETURNS INTEGER AS $
+RETURNS INTEGER AS $$
 DECLARE
     site_rec RECORD;
     metrics_count INTEGER := 0;
@@ -463,23 +518,23 @@ BEGIN
 
     RETURN metrics_count;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- ==================================================
--- USAGE EXAMPLES
+-- CLEANUP PROCEDURES
 -- ==================================================
 
--- Run the complete ETL pipeline:
--- SELECT * FROM run_etl_pipeline(1000);
-
--- Process specific event types:
--- SELECT process_pageview_events(500);
--- SELECT process_batch_events(500);
--- SELECT process_page_exit_events(500);
--- SELECT process_form_submit_events(500);
-
--- Generate daily metrics for yesterday:
--- SELECT calculate_daily_metrics(CURRENT_DATE - 1);
-
--- Clean up old data:
--- SELECT cleanup_processed_events(90);
+-- Clean up old processed events
+CREATE OR REPLACE FUNCTION cleanup_processed_events(retention_days INTEGER DEFAULT 90)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM events_log 
+    WHERE processed_at IS NOT NULL 
+    AND processed_at < NOW() - (retention_days || ' days')::INTERVAL;
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;

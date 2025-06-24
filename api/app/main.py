@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text  # Add this import
 from datetime import datetime
 import json
 import logging
@@ -76,8 +77,8 @@ async def root():
 async def health(db: Session = Depends(get_db)):
     """Health check with database connectivity test"""
     try:
-        # Test database connection
-        db.execute("SELECT 1")
+        # Test database connection - FIXED: Added text() wrapper
+        db.execute(text("SELECT 1"))
         return {
             "status": "healthy",
             "database": "connected",
