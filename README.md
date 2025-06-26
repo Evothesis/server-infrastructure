@@ -1,37 +1,38 @@
-# Analytics Platform - Single VM Migration
+# Analytics Platform - Data-as-a-Service MVP
 
-A self-hosted analytics platform migrated from AWS serverless architecture to a single-VM Docker deployment. Built for privacy-focused web analytics with comprehensive event tracking and real-time data processing.
+A privacy-focused data collection and export platform that captures comprehensive website behavioral data and delivers it directly to client S3 buckets. Built for agencies and businesses that need complete data ownership without vendor lock-in.
 
 ## 🏗️ Architecture Overview
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│    Nginx    │    │   FastAPI   │    │ PostgreSQL  │
-│ (Port 80)   │───▶│ (Port 8000) │───▶│ (Port 5432) │
-│ Web Server  │    │    API      │    │  Database   │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │
-       ▼
-┌─────────────┐
-│ Demo Site   │
-│ tracking.js │
-│ Pixel       │
-└─────────────┘
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│    Nginx    │    │   FastAPI   │    │ PostgreSQL  │    │  S3 Export  │
+│ (Port 80)   │───▶│ (Port 8000) │───▶│ (Port 5432) │───▶│ Client      │
+│ Web Server  │    │Event Collect│    │ Raw Events  │    │ Buckets     │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+       │                                      │
+       ▼                                      ▼
+┌─────────────┐                    ┌─────────────┐
+│ Demo Site   │                    │  Backup     │
+│ tracking.js │                    │  S3 Bucket  │
+│ Pixel       │                    │ (Metering)  │
+└─────────────┘                    └─────────────┘
 ```
 
 ### Components
 
 - **Nginx**: Reverse proxy serving static demo site and routing API requests
 - **FastAPI**: Event collection API with real-time processing and health checks
-- **PostgreSQL**: Primary database with JSONB support for flexible event storage
+- **PostgreSQL**: Raw event storage with JSONB support for flexible data capture
 - **Tracking Pixel**: JavaScript library for comprehensive behavioral tracking
+- **S3 Export**: Automated export to client buckets + backup bucket for metering
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Docker Desktop (Windows/Mac) or Docker Engine + Docker Compose (Linux)
-- 8GB+ RAM recommended
+- 4GB+ RAM recommended
 - Ports 80, 5432, 8000 available
 
 ### Installation
@@ -44,13 +45,13 @@ A self-hosted analytics platform migrated from AWS serverless architecture to a 
 
 2. **Start the platform**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
 3. **Verify installation**
    ```bash
    # Check all services are running
-   docker-compose ps
+   docker compose ps
    
    # Check API health
    curl http://localhost:8000/health
@@ -65,51 +66,107 @@ For development with hot reload:
 
 ```bash
 # Start with logs visible
-docker-compose up
+docker compose up
 
 # Or run in background
-docker-compose up -d && docker-compose logs -f
+docker compose up -d && docker compose logs -f
 ```
 
 The FastAPI application will automatically reload when you modify files in `api/app/`.
 
-## 📊 Features
+## 📊 Data-as-a-Service Model
 
-### Event Tracking
+### Core Value Proposition
+- **Complete Data Ownership**: Raw events exported directly to client S3 buckets
+- **No Analytics Lock-in**: Clients build their own dashboards and insights
+- **Privacy-First**: GDPR compliant with automatic PII redaction
+- **Multi-Site Support**: Single pixel deployment tracks unlimited domains
+
+### Business Model
+- **VM-per-client deployment** with unlimited site tracking
+- **Usage-based pricing** determined by unique domains detected
+- **Auto-scaling billing** when new sites are added to existing pixels
+- **Complete data export** with configurable formats and schedules
+
+## 📡 Event Tracking Capabilities
+
+### Advanced Behavioral Tracking
 - **Page Views**: Full attribution tracking with UTM parameters and referrer classification
 - **User Interactions**: Clicks, form submissions, text selection/copy, file downloads
 - **Behavioral Analytics**: Scroll depth tracking (25%/50%/75%/100% milestones)
 - **Session Management**: Cross-tab session persistence with 30-minute timeout
 - **Page Visibility**: Focus/blur tracking and time-on-page measurement
 
-### Data Collection
-- **Activity-Based Batching**: Intelligent event grouping with 60-second inactivity timeout
-- **Real-Time Processing**: Immediate storage of critical events (pageviews, form submissions)
-- **Privacy-Focused**: Automatic redaction of sensitive form fields (passwords, credit card info)
-- **Browser Compatibility**: Support for modern browsers with graceful fallbacks
+### Privacy & Compliance
+- **Automatic PII Redaction**: Passwords, credit cards, SSNs filtered automatically
+- **Do Not Track Respect**: Built-in browser DNT preference handling
+- **GDPR Compliance**: Privacy-by-design architecture
+- **Anonymous Tracking**: Randomly generated visitor IDs, no fingerprinting
 
-### Analytics Infrastructure
-- **Flexible Schema**: JSONB storage for event data with extracted core fields for performance
-- **Multi-Tenant**: Site-based data separation with automatic site ID detection
-- **Real-Time APIs**: Live event counts and recent activity endpoints
-- **Time-Series Data**: Optimized for time-based queries and reporting
+### Data Collection Features
+- **Activity-Based Batching**: Intelligent event grouping with 60-second inactivity timeout
+- **Real-Time Processing**: Sub-second event storage and processing
+- **Browser Compatibility**: Support for modern browsers with graceful fallbacks
+- **Cross-Domain Tracking**: Single pixel deployment across multiple domains
 
 ## 🗄️ Database Schema
 
 ### Raw Event Storage
 - **`events_log`**: Primary table storing all raw events as JSONB with extracted core fields
-- **Indexing**: Optimized for time-series queries, session lookup, and site filtering
+- **Flexible Schema**: JSONB storage handles any event structure without migrations
+- **Time-Series Optimized**: Indexed for chronological queries and export operations
+- **Multi-Tenant**: Site-based data separation with automatic site ID detection
 
-### Analytics Tables (Processed Data)
-- **`user_sessions`**: Aggregated session data with attribution and device information
-- **`pageviews`**: Individual page visits with timing and referrer data
-- **`user_events`**: Structured interaction events (clicks, scrolls, form submissions)
-- **`form_submissions`**: Dedicated form analytics with field-level insights
-- **`daily_site_metrics`**: Pre-aggregated daily statistics for dashboard performance
+### Key Fields
+```sql
+CREATE TABLE events_log (
+    id SERIAL PRIMARY KEY,
+    event_id UUID DEFAULT gen_random_uuid(),
+    event_type VARCHAR(50) NOT NULL,
+    session_id VARCHAR(100),
+    visitor_id VARCHAR(100),
+    site_id VARCHAR(100),
+    timestamp TIMESTAMPTZ NOT NULL,
+    url TEXT,
+    path VARCHAR(500),
+    user_agent TEXT,
+    ip_address INET,
+    raw_event_data JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    exported_at TIMESTAMPTZ  -- Tracks S3 export status
+);
+```
 
-See [database/README.md](database/README.md) for detailed schema documentation.
+## 📤 S3 Export Pipeline
 
-## 📡 API Endpoints
+### Export Configuration
+- **Dual Export**: Client bucket + backup bucket for metering
+- **Configurable Schedule**: Hourly default, customizable per client
+- **Multiple Formats**: JSON, CSV, and Parquet support
+- **Mixed Data**: All sites in single export stream with site_id separation
+
+### Client Configuration
+```yaml
+# Per-client VM configuration
+s3_export:
+  client_bucket: "client-analytics-bucket"
+  backup_bucket: "evothesis-backup-bucket"
+  format: "json"  # json, csv, parquet
+  schedule: "hourly"  # hourly, daily, real-time
+  credentials:
+    access_key: "client-provided"
+    secret_key: "client-provided"
+    region: "us-east-1"
+```
+
+### Data Flow
+```
+Raw Events → PostgreSQL → Batch Processor → S3 Export → Client Analytics
+                                      ↓
+                               Backup S3 (Metering)
+```
+
+## 🔧 API Endpoints
 
 ### Event Collection
 ```bash
@@ -117,58 +174,33 @@ POST /collect          # Primary event collection endpoint
 OPTIONS /collect       # CORS preflight handling
 ```
 
-### Monitoring & Analytics
+### System Monitoring
 ```bash
-GET /health           # Health check with database connectivity test
-GET /events/count     # Total event count
+GET /health           # Health check with database connectivity
+GET /events/count     # Total event count for monitoring
 GET /events/recent    # Recent events (debugging)
 ```
 
-### Example Usage
-```javascript
-// Events are automatically sent by the tracking pixel
-// Manual event sending:
-fetch('/collect', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    eventType: 'custom_event',
-    sessionId: 'sess_abc123',
-    visitorId: 'vis_xyz789',
-    siteId: 'example-com',
-    eventData: { action: 'button_click' }
-  })
-});
+### S3 Export Management (Planned)
+```bash
+POST /export/run      # Manual export trigger
+GET /export/status    # Export pipeline status
+GET /export/config    # Client export configuration
 ```
 
-## 🔧 Configuration
+## 🚀 Deployment Architecture
 
-### Environment Variables
+### VM-per-Client Model
+- **Dedicated Infrastructure**: Each client gets isolated VM deployment
+- **Multi-Site Support**: Single pixel tracks unlimited client domains
+- **Auto-Discovery**: New domains automatically detected and billed
+- **Scalable Pricing**: Usage-based billing by unique domain count
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/postgres` | PostgreSQL connection string |
-| `ENVIRONMENT` | `development` | Application environment |
-
-### Tracking Pixel Configuration
-
-Edit `tracking/js/tracking.js` to customize tracking behavior:
-
-```javascript
-var config = {
-  sessionTimeout: 30 * 60 * 1000,     // 30 minutes
-  inactivityTimeout: 60 * 1000,       // 1 minute
-  maxBatchSize: 50,                   // Events per batch
-  scrollMilestones: [25, 50, 75, 100], // Scroll tracking percentages
-  trackClicks: true,
-  trackForms: true,
-  trackScrollDepth: true,
-  trackTextSelection: true,
-  trackPageVisibility: true
-};
-```
-
-## 🚢 Deployment
+### Multi-Tenant Agencies
+- **Single VM**: Agencies deploy one VM for all client sites
+- **Domain Separation**: Data exported with site_id for client separation
+- **Flexible Billing**: Per-site pricing with agency-level management
+- **Easy Client Handoff**: Individual client data easily separated
 
 ### Production Deployment
 
@@ -177,181 +209,115 @@ var config = {
    - 4GB+ RAM, 20GB+ storage
    - Docker and Docker Compose installed
 
-2. **Security Configuration**
+2. **Client Onboarding**
    ```bash
-   # Update CORS origins in api/app/main.py
-   allow_origins=["https://yourdomain.com"]
+   # Configure client S3 credentials
+   export CLIENT_S3_BUCKET="client-bucket-name"
+   export CLIENT_S3_ACCESS_KEY="provided-by-client"
+   export CLIENT_S3_SECRET_KEY="provided-by-client"
    
-   # Configure reverse proxy (Nginx/Apache) for SSL termination
-   # Set up firewall rules (ports 80, 443 only)
+   # Deploy with client configuration
+   docker compose up -d
    ```
 
-3. **Production Environment**
-   ```bash
-   # Use production docker-compose override
-   cp docker-compose.prod.yml docker-compose.override.yml
-   
-   # Set production environment variables
-   export DATABASE_URL="postgresql://user:pass@localhost:5432/analytics"
-   export ENVIRONMENT="production"
-   
-   # Deploy
-   docker-compose up -d
+3. **Pixel Deployment**
+   ```html
+   <!-- Add to client websites -->
+   <script src="https://client-vm.evothesis.com/js/tracking.js"></script>
    ```
 
-### Scaling Considerations
+## 🔍 Monitoring & Operations
 
-- **Database**: Use managed PostgreSQL (AWS RDS, Google Cloud SQL) for high traffic
-- **Load Balancing**: Multiple FastAPI containers behind load balancer
-- **CDN**: Serve tracking pixel from CDN for global performance
-- **Monitoring**: Add Prometheus/Grafana for operational metrics
-
-## 🔍 Monitoring
-
-### Health Checks
+### Health Monitoring
 ```bash
-# API health
-curl http://localhost:8000/health
+# System health
+curl http://vm-hostname:8000/health
 
-# Database connectivity
-docker-compose exec postgres pg_isready -U postgres
+# Event collection rate
+curl http://vm-hostname:8000/events/count
 
 # Container status
-docker-compose ps
+docker compose ps
 ```
 
-### Logs
+### Data Export Verification
 ```bash
-# All services
-docker-compose logs -f
+# Check export status
+curl http://vm-hostname:8000/export/status
 
-# Specific service
-docker-compose logs -f fastapi
-docker-compose logs -f postgres
-docker-compose logs -f nginx
+# Manual export trigger
+curl -X POST http://vm-hostname:8000/export/run
+
+# View recent exports
+aws s3 ls s3://client-bucket/analytics/ --recursive
 ```
 
 ### Performance Monitoring
-```bash
-# Database queries
-docker-compose exec postgres psql -U postgres -c "
-  SELECT query, calls, total_time, mean_time 
-  FROM pg_stat_statements 
-  ORDER BY total_time DESC LIMIT 10;"
-
-# Event collection rate
-curl http://localhost:8000/events/count
-```
-
-## Testing
-
-### Test Data Generation
-
-**Important**: Use a real web browser (not command-line tools) to generate analytics events, as the JavaScript tracking pixel requires browser execution.
-
-Visit the demo site at `http://localhost` and interact with:
-- Navigation between pages
-- Form submissions
-- Button clicks and link clicks
-- Text selection and copying
-- Scroll through long pages
-- Tab switching (page visibility)
-
-### Manual Testing
-```bash
-# Send test event
-curl -X POST http://localhost:8000/collect \
-  -H "Content-Type: application/json" \
-  -d '{"eventType":"test","siteId":"localhost","sessionId":"test_session"}'
-
-# Check event was stored
-curl http://localhost:8000/events/recent
-
-# Process events with ETL pipeline
-curl -X POST http://localhost:8000/etl/run-sync
-
-# View processed analytics data
-curl http://localhost:8000/etl/recent-sessions
-```
-
-## 📈 Migration from AWS
-
-This platform replaces the following AWS services:
-
-| AWS Service | Local Equivalent | Migration Notes |
-|-------------|------------------|-----------------|
-| Lambda | FastAPI containers | Event processing logic preserved |
-| DynamoDB | PostgreSQL | JSONB provides similar flexibility |
-| S3 | Local storage | Static assets served by Nginx |
-| CloudFront | Nginx + optional CDN | Cache headers configured |
-| API Gateway | Nginx reverse proxy | CORS and routing handled |
-
-### Data Migration
-
-If migrating from existing AWS setup:
-1. Export DynamoDB data to JSON
-2. Transform to PostgreSQL format using provided ETL scripts
-3. Bulk import via `COPY` commands
-4. Update tracking pixels to point to new endpoints
+- **Event Collection Rate**: Monitor events/second for capacity planning
+- **S3 Export Success**: Track successful vs failed exports
+- **Domain Discovery**: Monitor new domains for billing adjustments
+- **Storage Growth**: Track PostgreSQL and S3 storage usage
 
 ## 🔒 Privacy & Compliance
 
-### Data Protection
-- **No PII Collection**: Visitor IDs are randomly generated, not tied to personal information
-- **Sensitive Data Redaction**: Automatic filtering of password fields, credit card info, SSNs
+### Built-in Privacy Protection
+- **No PII Collection**: Visitor IDs are randomly generated, not personal identifiers
+- **Sensitive Data Redaction**: Automatic filtering of passwords, credit cards, SSNs
 - **Session Isolation**: Each session gets unique ID, no cross-session tracking
-- **Data Retention**: Configurable retention policies with automatic cleanup
+- **Configurable Retention**: Client-controlled data retention policies
 
-### GDPR Compliance
-- **Do Not Track**: Respects browser DNT headers
-- **Data Portability**: JSON export capabilities for user data requests
+### GDPR Compliance Features
+- **Do Not Track**: Respects browser DNT headers automatically
+- **Data Portability**: Complete export capabilities for user data requests
 - **Right to Deletion**: Visitor ID-based data removal procedures
-- **Consent Management**: Integration points for consent management platforms
+- **Consent Integration**: Built-in support for consent management platforms
 
-## 🛠️ Development
+## 📈 Business Model Integration
 
-### Local Development
-```bash
-# Install development dependencies
-cd api && pip install -r requirements.txt
+### Automatic Billing Events
+- **Domain Discovery**: New site_id values trigger billing webhooks
+- **Usage Tracking**: Event volume monitoring for overage billing
+- **Export Verification**: Successful S3 exports confirm service delivery
+- **Retention Compliance**: Automated data lifecycle management
 
-# Run tests
-pytest
+### Client Value Delivery
+- **Real-Time Data**: Events available in S3 within configured export schedule
+- **Complete Ownership**: Clients control their data, infrastructure, and retention
+- **Integration Ready**: Standard formats compatible with any analytics platform
+- **Vendor Independence**: No lock-in, clients can export and migrate anytime
 
-# Format code
-black api/app/
-isort api/app/
+## 🛠️ Development Roadmap
 
-# Database migrations
-cd api && alembic upgrade head
-```
+### Current Status: Data Collection MVP ✅
+- Event collection and storage complete
+- Tracking pixel with comprehensive behavioral data
+- Privacy compliance and PII redaction
+- Demo environment for testing
 
-### Adding New Event Types
+### Next Phase: S3 Export Pipeline 🚧
+- S3 client integration with per-client credentials
+- Automated export scheduling (hourly default)
+- Dual export (client + backup buckets)
+- Export status tracking and monitoring
 
-1. **Update tracking pixel** (`tracking/js/tracking.js`)
-2. **Add API processing** (`api/app/main.py`)
-3. **Create analytics table** if needed (`database/`)
-4. **Update ETL pipeline** for new event type
-
-### Database Changes
-
-1. **Create migration** in `database/` directory with incremental number
-2. **Test migration** on development data
-3. **Update documentation** in database README
-4. **Deploy** with `docker-compose down -v && docker-compose up -d`
+### Future Enhancements
+- Real-time streaming exports
+- Advanced export filtering and transformation
+- Client dashboard for export monitoring
+- Advanced billing and usage analytics
 
 ## 📚 Documentation
 
-- [Database Schema](database/README.md) - Detailed database documentation
-- [API Reference](api/README.md) - FastAPI endpoint documentation
+- [Database Schema](database/README.md) - Raw event storage documentation
+- [API Reference](api/README.md) - FastAPI endpoint documentation  
 - [Tracking Pixel](tracking/README.md) - JavaScript library documentation
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch (`git checkout -b feature/analytics-dashboard`)
-3. Commit changes (`git commit -am 'Add analytics dashboard'`)
-4. Push to branch (`git push origin feature/analytics-dashboard`)
+2. Create feature branch (`git checkout -b feature/s3-export`)
+3. Commit changes (`git commit -am 'Add S3 export pipeline'`)
+4. Push to branch (`git push origin feature/s3-export`)
 5. Create Pull Request
 
 ### Code Standards
@@ -375,18 +341,18 @@ netstat -tulpn | grep :80
 netstat -tulpn | grep :5432
 
 # Rebuild containers
-docker-compose down -v
-docker-compose build --no-cache
-docker-compose up -d
+docker compose down -v
+docker compose build --no-cache
+docker compose up -d
 ```
 
 **Database connection failed**
 ```bash
 # Check PostgreSQL logs
-docker-compose logs postgres
+docker compose logs postgres
 
 # Test connection manually
-docker-compose exec postgres psql -U postgres -d postgres
+docker compose exec postgres psql -U postgres -d postgres
 ```
 
 **Events not being tracked**
@@ -399,13 +365,18 @@ curl http://localhost/js/tracking.js
 curl http://localhost:8000/health
 ```
 
-### Getting Help
+**S3 Export Issues**
+```bash
+# Check export status
+curl http://localhost:8000/export/status
 
-1. Check the [Issues](https://github.com/your-repo/issues) for similar problems
-2. Review logs: `docker-compose logs -f`
-3. Create detailed issue with logs and reproduction steps
-4. For urgent issues: [Contact information]
+# Verify S3 credentials
+aws s3 ls s3://client-bucket/ --profile client-profile
+
+# Manual export test
+curl -X POST http://localhost:8000/export/run
+```
 
 ---
 
-**Built with ❤️ for privacy-focused analytics**
+**Built with ❤️ for complete data ownership and privacy-first analytics**

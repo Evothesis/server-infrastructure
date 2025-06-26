@@ -1,21 +1,20 @@
-# FastAPI Analytics Backend
+# FastAPI Data Collection Backend
 
-The FastAPI backend serves as the core event collection and processing engine for the analytics platform. It provides high-performance event ingestion, real-time health monitoring, and comprehensive ETL pipeline management.
+The FastAPI backend serves as the core event collection engine for the data-as-a-service analytics platform. It provides high-performance event ingestion, real-time health monitoring, and automated S3 export pipeline for complete data ownership.
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Nginx Proxy   │───▶│   FastAPI App   │───▶│   PostgreSQL    │
-│   Port 80       │    │   Port 8000     │    │   Port 5432     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │  ETL Pipeline   │
-                    │  Background     │
-                    │  Processing     │
-                    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Nginx Proxy   │───▶│   FastAPI App   │───▶│   PostgreSQL    │───▶│   S3 Export     │
+│   Port 80       │    │   Port 8000     │    │   Port 5432     │    │ Client Buckets  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+                              │                         │
+                              ▼                         ▼
+                    ┌─────────────────┐       ┌─────────────────┐
+                    │  Health & Stats │       │  Backup Bucket  │
+                    │  Monitoring     │       │  (Metering)     │
+                    └─────────────────┘       └─────────────────┘
 ```
 
 ## 📁 Project Structure
@@ -27,7 +26,7 @@ api/
 │   ├── main.py            # FastAPI application and event collection
 │   ├── database.py        # Database connection and session management
 │   ├── models.py          # SQLAlchemy ORM models
-│   └── etl.py            # ETL pipeline API endpoints
+│   └── s3_export.py       # S3 export pipeline (planned)
 ├── requirements.txt       # Python dependencies
 ├── Dockerfile            # Container configuration
 └── README.md            # This file
@@ -64,26 +63,21 @@ The primary FastAPI application handles:
 - Optimized for time-series queries with strategic indexing
 - Support for multi-tenant data separation by site_id
 
-### ETL Pipeline (`etl.py`)
+### S3 Export Pipeline (`s3_export.py`) - Planned
 
-Comprehensive ETL management system featuring:
+The core data-as-a-service functionality featuring:
 
-**Pipeline Operations:**
-- `POST /etl/run-sync`: Synchronous ETL execution with detailed results
-- `POST /etl/run`: Asynchronous background processing
-- `POST /etl/process/{event_type}`: Process specific event types
-- `POST /etl/calculate-daily-metrics`: Generate daily aggregations
+**Export Operations:**
+- `POST /export/run`: Manual export trigger
+- `GET /export/status`: Export pipeline health and statistics
+- `GET /export/config`: Client export configuration
+- Automated scheduling with configurable intervals
 
-**Monitoring & Status:**
-- `GET /etl/status`: Real-time pipeline health and processing statistics
-- `GET /etl/recent-sessions`: Sample processed analytics data
-- Unprocessed event counts by type
-- Analytics table record counts
-
-**Maintenance Operations:**
-- `POST /etl/cleanup`: Automated data retention management
-- Configurable retention periods for events and metrics
-- Safe deletion of processed events
+**Client Configuration:**
+- Per-client S3 credentials (encrypted storage)
+- Configurable export formats (JSON, CSV, Parquet)
+- Dual export (client bucket + backup bucket)
+- Export frequency settings (hourly, daily, real-time)
 
 ## 📡 API Endpoints
 
@@ -120,7 +114,7 @@ Content-Type: application/json
 }
 ```
 
-### Health Check
+### System Monitoring
 
 ```http
 GET /health
@@ -135,26 +129,17 @@ GET /health
 }
 ```
 
-### ETL Management
+### Data Export (Planned)
 
 ```http
-# Run complete ETL pipeline
-POST /etl/run-sync?batch_size=1000
+# Trigger manual export
+POST /export/run?format=json&since=2025-06-22T00:00:00Z
 
-# Check processing status
-GET /etl/status
+# Check export status
+GET /export/status
 
-# Get recent processed sessions
-GET /etl/recent-sessions?limit=5
-
-# Process specific event type
-POST /etl/process/pageview?batch_size=1000
-
-# Calculate daily metrics
-POST /etl/calculate-daily-metrics?target_date=2025-06-24
-
-# Clean up old data
-POST /etl/cleanup?retention_days=90
+# Get client configuration
+GET /export/config
 ```
 
 ## ⚙️ Configuration
@@ -165,6 +150,12 @@ POST /etl/cleanup?retention_days=90
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/postgres` | PostgreSQL connection string |
 | `ENVIRONMENT` | `development` | Application environment (development/production) |
+| `S3_BACKUP_BUCKET` | None | Backup bucket for metering and retention |
+| `CLIENT_S3_BUCKET` | None | Client's S3 bucket for data export |
+| `CLIENT_S3_ACCESS_KEY` | None | Client-provided S3 access key |
+| `CLIENT_S3_SECRET_KEY` | None | Client-provided S3 secret key |
+| `EXPORT_SCHEDULE` | `hourly` | Default export frequency |
+| `EXPORT_FORMAT` | `json` | Default export format |
 
 ### Database Configuration
 
@@ -222,40 +213,105 @@ curl http://localhost:8000/health
 curl http://localhost:8000/events/recent
 ```
 
-### ETL Testing
+### S3 Export Testing (Planned)
 
 ```bash
-# Check ETL status
-curl http://localhost:8000/etl/status
+# Test export pipeline
+curl -X POST http://localhost:8000/export/run
 
-# Run ETL pipeline
-curl -X POST http://localhost:8000/etl/run-sync
+# Check export status
+curl http://localhost:8000/export/status
 
-# View processed sessions
-curl http://localhost:8000/etl/recent-sessions
+# Verify S3 upload
+aws s3 ls s3://client-bucket/analytics/
 ```
 
-## 📊 Performance Considerations
+## 📊 Data Export Architecture
+
+### Raw Event Export Strategy
+
+**Why Raw Events Only:**
+- **Client Flexibility**: Clients build their own analytics and dashboards
+- **Reduced Complexity**: No analytics processing pipeline to maintain
+- **Faster Time-to-Market**: Simpler architecture, fewer moving parts
+- **Complete Data Ownership**: Clients get all captured data without vendor interpretation
+
+### Export Formats
+
+**JSON (Default):**
+```json
+{
+  "export_metadata": {
+    "export_id": "exp_abc123",
+    "export_time": "2025-06-22T12:00:00Z",
+    "event_count": 1543,
+    "time_range": {
+      "start": "2025-06-22T11:00:00Z",
+      "end": "2025-06-22T12:00:00Z"
+    }
+  },
+  "events": [
+    {
+      "id": 12345,
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "event_type": "pageview",
+      "session_id": "sess_abc123",
+      "visitor_id": "vis_xyz789",
+      "site_id": "example-com",
+      "timestamp": "2025-06-22T11:30:15Z",
+      "url": "https://example.com/page",
+      "raw_event_data": {...}
+    }
+  ]
+}
+```
+
+**CSV Format:**
+```csv
+id,event_id,event_type,session_id,visitor_id,site_id,timestamp,url,path,raw_event_data
+12345,550e8400-e29b-41d4,pageview,sess_abc123,vis_xyz789,example-com,2025-06-22T11:30:15Z,https://example.com/page,/page,"{...}"
+```
+
+**Parquet Format:**
+- Columnar storage for efficient analytics processing
+- Schema evolution support for new event types
+- Optimized for data warehouse ingestion
+
+### Export Scheduling
+
+**Configurable Frequency:**
+- **Hourly** (default): Exports every hour at minute 0
+- **Daily**: Exports daily at midnight UTC
+- **Real-time**: Streaming exports for enterprise clients
+- **Custom**: Cron-based scheduling for specific requirements
+
+**Export Triggers:**
+- **Scheduled**: Automatic exports based on configuration
+- **Manual**: API-triggered exports for testing/backfill
+- **Threshold**: Export when event count reaches specified limit
+- **On-demand**: Client-requested exports via webhook
+
+## 📈 Performance Considerations
 
 ### Event Collection Optimization
 
-- **Asynchronous Processing**: Events are stored immediately, ETL runs separately
-- **Batch Processing**: ETL handles events in configurable batch sizes
+- **Asynchronous Processing**: Events stored immediately, exports run separately
+- **Batch Processing**: Exports handle thousands of events efficiently
 - **Index Optimization**: Strategic database indexes for time-series queries
 - **Connection Pooling**: Efficient database connection management
 
 ### Scaling Guidelines
 
-**Single Server (Current):**
-- Handles 1000+ events/second on modern hardware
+**Single VM (Current):**
+- Handles 10,000+ events/hour on modern hardware
 - PostgreSQL can store millions of events efficiently
-- ETL processing scales with batch size configuration
+- S3 export scales with available bandwidth
 
-**Multi-Server Scaling:**
-- Run multiple FastAPI instances behind load balancer
-- Use managed PostgreSQL service (AWS RDS, Google Cloud SQL)
-- Consider read replicas for analytics queries
-- Implement Redis for session caching if needed
+**Multi-Client Scaling:**
+- **VM-per-client**: Isolated infrastructure for enterprise clients
+- **Shared Infrastructure**: Agency model with multi-tenant data separation
+- **Auto-scaling**: Horizontal scaling based on event volume
+- **Global Distribution**: Regional VMs for latency optimization
 
 ## 🚨 Error Handling
 
@@ -276,67 +332,19 @@ except Exception as e:
     return {"status": "error", "message": "Event processing failed"}
 ```
 
-### Common Error Scenarios
+### S3 Export Error Handling
 
-**Database Connection Issues:**
-- Health check endpoint reports database status
-- Automatic connection retry with SQLAlchemy
-- Graceful degradation without client impact
+**Retry Logic:**
+- Exponential backoff for temporary S3 failures
+- Dead letter queue for permanently failed exports
+- Client notification for export failures
+- Manual retry capability via API
 
-**Invalid Event Data:**
-- JSON parsing errors return 400 Bad Request
-- Missing fields use safe defaults
-- JSONB storage handles schema flexibility
-
-**ETL Processing Errors:**
-- Individual event failures don't stop batch processing
-- Detailed error logging for troubleshooting
-- Retry mechanisms for transient failures
-
-## 📈 Monitoring
-
-### Application Metrics
-
-**Built-in Endpoints:**
-```bash
-# Overall system health
-curl http://localhost:8000/health
-
-# Event collection statistics  
-curl http://localhost:8000/events/count
-
-# ETL processing status
-curl http://localhost:8000/etl/status
-```
-
-**Log Monitoring:**
-```bash
-# View application logs
-docker-compose logs -f fastapi
-
-# Filter for errors
-docker-compose logs fastapi | grep ERROR
-```
-
-### Performance Monitoring
-
-**Database Query Performance:**
-```sql
--- View slow queries
-SELECT query, calls, total_time, mean_time 
-FROM pg_stat_statements 
-ORDER BY total_time DESC LIMIT 10;
-
--- Check index usage
-SELECT tablename, indexname, idx_scan 
-FROM pg_stat_user_indexes 
-ORDER BY idx_scan DESC;
-```
-
-**ETL Processing Metrics:**
-- Unprocessed event counts by type
-- Processing time per ETL step
-- Analytics table growth rates
+**Common Error Scenarios:**
+- **S3 Credentials Invalid**: Client notification + export pause
+- **Network Connectivity**: Automatic retry with backoff
+- **Data Format Errors**: Validation before export attempt
+- **Quota Exceeded**: Client notification + billing integration
 
 ## 🔒 Security
 
@@ -347,6 +355,20 @@ ORDER BY idx_scan DESC;
 - **SQL Injection Prevention**: SQLAlchemy ORM parameter binding
 - **XSS Prevention**: No direct HTML rendering in API responses
 
+### S3 Export Security
+
+**Credential Management:**
+- Client S3 credentials encrypted at rest
+- No long-term credential storage
+- IAM role-based access where possible
+- Credential rotation support
+
+**Data Protection:**
+- TLS encryption for all S3 transfers
+- Bucket-level access policies
+- Export audit logging
+- Data integrity verification
+
 ### Production Security
 
 **Recommended Production Settings:**
@@ -354,18 +376,18 @@ ORDER BY idx_scan DESC;
 # Update CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://yourdomain.com"],  # Specific domains only
+    allow_origins=["https://client-domain.com"],  # Specific domains only
     allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 ```
 
-**Database Security:**
-- Use connection pooling with limited pool size
-- Implement database connection encryption (SSL)
-- Regular security updates for PostgreSQL
+**Infrastructure Security:**
+- Database connection encryption (SSL)
+- Regular security updates for all dependencies
 - Network-level access restrictions
+- Container security scanning
 
 ## 🐛 Troubleshooting
 
@@ -377,16 +399,16 @@ app.add_middleware(
 netstat -tulpn | grep :8000
 
 # View detailed logs
-docker-compose logs fastapi
+docker compose logs fastapi
 
 # Rebuild container
-docker-compose build --no-cache fastapi
+docker compose build --no-cache fastapi
 ```
 
 **Database Connection Failed:**
 ```bash
 # Test database connectivity
-docker-compose exec postgres pg_isready -U postgres
+docker compose exec postgres pg_isready -U postgres
 
 # Check connection string
 curl http://localhost:8000/health
@@ -398,16 +420,19 @@ curl http://localhost:8000/health
 docker stats
 
 # Check for memory leaks in logs
-docker-compose logs fastapi | grep -i memory
+docker compose logs fastapi | grep -i memory
 ```
 
-**ETL Processing Stuck:**
+**S3 Export Failures:**
 ```bash
-# Check for unprocessed events
-curl http://localhost:8000/etl/status
+# Check export status
+curl http://localhost:8000/export/status
 
-# Run ETL manually
-curl -X POST http://localhost:8000/etl/run-sync
+# Test S3 credentials
+aws s3 ls s3://client-bucket/ --profile client-profile
+
+# View export logs
+docker compose logs fastapi | grep -i s3
 ```
 
 ### Debug Mode
@@ -427,10 +452,10 @@ logging.basicConfig(level=logging.DEBUG)
 - Monitor `pg_stat_activity` for blocking queries
 - Verify sufficient database resources
 
-**ETL Processing Delays:**
-- Increase ETL batch size for better throughput
-- Check for database lock contention
-- Monitor disk I/O for PostgreSQL
+**S3 Export Delays:**
+- Check network bandwidth to S3
+- Monitor export queue size
+- Verify S3 bucket permissions and quotas
 
 ## 🔄 Deployment
 
@@ -445,9 +470,11 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:pass@db.example.com:5432/analytics
       - ENVIRONMENT=production
+      - S3_BACKUP_BUCKET=evothesis-backup-bucket
+      - CLIENT_S3_BUCKET=client-analytics-bucket
     restart: unless-stopped
     deploy:
-      replicas: 3
+      replicas: 2
       resources:
         limits:
           memory: 512M
@@ -472,17 +499,42 @@ healthcheck:
 - Hot reload with `--reload` flag
 - Local database connection
 - Permissive CORS settings
+- Mock S3 exports for testing
 
 **Production:**
 - Error-level logging only
 - Static serving via Nginx
 - Managed database service
 - Restricted CORS origins
+- Real S3 integration
 - Connection pooling optimization
+
+### VM-per-Client Deployment
+
+**Client Onboarding Process:**
+1. **VM Provisioning**: Create dedicated client VM
+2. **Configuration**: Set client-specific environment variables
+3. **Deployment**: Deploy with client S3 credentials
+4. **Testing**: Verify event collection and S3 export
+5. **Pixel Integration**: Provide client with tracking pixel URL
+
+**Configuration Template:**
+```bash
+# Client-specific environment
+export CLIENT_NAME="client-company"
+export CLIENT_S3_BUCKET="client-analytics-bucket"
+export CLIENT_S3_ACCESS_KEY="AKIA..."
+export CLIENT_S3_SECRET_KEY="..."
+export EXPORT_SCHEDULE="hourly"
+export EXPORT_FORMAT="json"
+
+# Deploy
+docker compose -f docker-compose.prod.yml up -d
+```
 
 ---
 
 **For additional help:**
 - Main project documentation: [../README.md](../README.md)
 - Database schema details: [../database/README.md](../database/README.md)
-- ETL testing script: [../tests/etl_test.py](../tests/etl_test.py)
+- Tracking pixel documentation: [../tracking/README.md](../tracking/README.md)

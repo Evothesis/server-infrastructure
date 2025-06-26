@@ -10,7 +10,6 @@ from ipaddress import ip_address, AddressValueError
 
 from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
-from .etl import router as etl_router
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -39,8 +38,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include ETL router
-app.include_router(etl_router)
 
 def extract_client_ip(request: Request) -> str:
     """Extract client IP address from request headers"""
