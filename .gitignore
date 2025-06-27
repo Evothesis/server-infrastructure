@@ -6,7 +6,7 @@ docker-compose.override.yml
 postgres_data/
 
 # Environment files
-.env
+.env.*
 .env.local
 
 # Logs
