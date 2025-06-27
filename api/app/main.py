@@ -1,15 +1,17 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import text  # Add this import
+from sqlalchemy import text
 from datetime import datetime
 import json
 import logging
 import os
 from ipaddress import ip_address, AddressValueError
+from typing import Optional
 
 from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
+from .s3_export import create_s3_exporter
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +76,7 @@ async def root():
 async def health(db: Session = Depends(get_db)):
     """Health check with database connectivity test"""
     try:
-        # Test database connection - FIXED: Added text() wrapper
+        # Test database connection
         db.execute(text("SELECT 1"))
         return {
             "status": "healthy",
@@ -190,7 +192,8 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
                     "session_id": event.session_id,
                     "site_id": event.site_id,
                     "timestamp": event.timestamp.isoformat(),
-                    "created_at": event.created_at.isoformat()
+                    "created_at": event.created_at.isoformat(),
+                    "processed_at": event.processed_at.isoformat() if event.processed_at else None
                 }
                 for event in events
             ]
@@ -198,3 +201,79 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting recent events: {e}")
         raise HTTPException(status_code=500, detail="Database error")
+
+# S3 Export Endpoints
+
+@app.post("/export/run")
+async def run_export(
+    background_tasks: BackgroundTasks,
+    since: Optional[str] = None,
+    limit: int = 10000,
+    db: Session = Depends(get_db)
+):
+    """Trigger manual S3 export"""
+    try:
+        # Parse since parameter if provided
+        since_datetime = None
+        if since:
+            try:
+                since_datetime = datetime.fromisoformat(since.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid datetime format for 'since' parameter")
+        
+        # Create S3 exporter
+        exporter = create_s3_exporter()
+        
+        # Run export synchronously for now (can be moved to background for large exports)
+        result = exporter.export_events(db, since_datetime, limit)
+        
+        return result
+        
+    except ValueError as e:
+        logger.error(f"S3 export configuration error: {e}")
+        raise HTTPException(status_code=500, detail=f"Export configuration error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+@app.get("/export/status")
+async def get_export_status(db: Session = Depends(get_db)):
+    """Get S3 export pipeline status"""
+    try:
+        exporter = create_s3_exporter()
+        status = exporter.get_export_status(db)
+        return status
+    except ValueError as e:
+        logger.error(f"S3 export configuration error: {e}")
+        raise HTTPException(status_code=500, detail=f"Export configuration error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to get export status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
+@app.get("/export/config")
+async def get_export_config():
+    """Get current export configuration"""
+    try:
+        from .s3_export import S3ExportConfig
+        config = S3ExportConfig()
+        
+        # Return safe configuration info (no secrets)
+        return {
+            "client_bucket": config.client_bucket,
+            "client_region": config.client_region,
+            "backup_bucket": config.backup_bucket,
+            "backup_region": config.backup_region,
+            "export_format": config.export_format,
+            "export_schedule": config.export_schedule,
+            "site_id": config.site_id,
+            "credentials_configured": {
+                "client": bool(config.client_access_key and config.client_secret_key),
+                "backup": bool(config.backup_access_key and config.backup_secret_key)
+            }
+        }
+    except ValueError as e:
+        logger.error(f"S3 export configuration error: {e}")
+        raise HTTPException(status_code=500, detail=f"Configuration error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to get export config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get configuration")
