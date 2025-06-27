@@ -33,17 +33,35 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      # Auto-scaling PostgreSQL settings based on environment
+      - POSTGRES_SHARED_BUFFERS=${POSTGRES_SHARED_BUFFERS:-128MB}
+      - POSTGRES_WORK_MEM=${POSTGRES_WORK_MEM:-4MB}
+      - POSTGRES_MAX_CONNECTIONS=${POSTGRES_MAX_CONNECTIONS:-100}
     ports:
       - "5432:5432"  # Exposed for GUI tools like pgAdmin, DBeaver, etc.
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database:/docker-entrypoint-initdb.d/  # Mount all SQL files in order
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro  # Custom PostgreSQL config
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-128MB}
+      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # Auto-scaling resource limits
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEMORY_LIMIT:-512M}
+        reservations:
+          memory: ${POSTGRES_MEMORY_RESERVATION:-256M}
   
   nginx:
     image: nginx:alpine
