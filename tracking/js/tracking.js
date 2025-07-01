@@ -9,6 +9,7 @@
     trackScrollDepth: true,
     trackTextSelection: true,
     trackPageVisibility: true,
+    enableSpaDetection: true, // NEW: Enable SPA navigation detection
     sampleRate: 100, // Track 100% of visitors
     
     // Activity-based batching configuration
@@ -345,11 +346,144 @@
     sendData(payload);
   };
 
-  // Track page view
-  var trackPageView = function() {
+  // Store current URL for SPA navigation detection
+  var currentUrl = window.location.href;
+  var currentPath = window.location.pathname;
+
+  // Enhanced track page view with SPA support
+  var trackPageView = function(navigationMethod) {
     if (config.trackPageViews) {
       sessionStorage.setItem('_ts_page_start', Date.now().toString());
-      sendImmediate('pageview');
+      
+      var pageviewData = {};
+      if (navigationMethod) {
+        pageviewData.navigationMethod = navigationMethod;
+      }
+      
+      sendImmediate('pageview', pageviewData);
+      
+      // Update stored URLs
+      currentUrl = window.location.href;
+      currentPath = window.location.pathname;
+      
+      console.log('[Tracking] Pageview tracked:', currentPath, 
+                  navigationMethod ? 'via ' + navigationMethod : '');
+    }
+  };
+
+  // SPA Navigation Detection System
+  var spaNavigationDetector = {
+    
+    init: function() {
+      if (!config.enableSpaDetection) {
+        console.log('[Tracking] SPA navigation detection disabled');
+        return;
+      }
+      
+      this.interceptPushState();
+      this.interceptReplaceState();
+      this.setupPopstateListener();
+      this.setupHashChangeListener();
+      this.setupVisibilityChangeListener();
+      
+      console.log('[Tracking] SPA navigation detection enabled');
+    },
+    
+    // Intercept pushState calls (programmatic navigation)
+    interceptPushState: function() {
+      var originalPushState = history.pushState;
+      var self = this;
+      
+      history.pushState = function() {
+        originalPushState.apply(history, arguments);
+        
+        // Small delay to ensure DOM updates complete
+        setTimeout(function() {
+          self.handleUrlChange('pushstate');
+        }, 0);
+      };
+    },
+    
+    // Intercept replaceState calls
+    interceptReplaceState: function() {
+      var originalReplaceState = history.replaceState;
+      var self = this;
+      
+      history.replaceState = function() {
+        originalReplaceState.apply(history, arguments);
+        
+        setTimeout(function() {
+          self.handleUrlChange('replacestate');
+        }, 0);
+      };
+    },
+    
+    // Listen for back/forward navigation
+    setupPopstateListener: function() {
+      var self = this;
+      window.addEventListener('popstate', function(event) {
+        setTimeout(function() {
+          self.handleUrlChange('popstate');
+        }, 0);
+      });
+    },
+    
+    // Listen for hash changes (for hash-based routing)
+    setupHashChangeListener: function() {
+      var self = this;
+      window.addEventListener('hashchange', function(event) {
+        self.handleUrlChange('hashchange');
+      });
+    },
+    
+    // Handle page visibility changes (tab switching)
+    setupVisibilityChangeListener: function() {
+      var self = this;
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) {
+          // User returned to tab - check if URL changed while away
+          if (window.location.href !== currentUrl) {
+            self.handleUrlChange('visibility_return');
+          }
+        }
+      });
+    },
+    
+    // Central URL change handler
+    handleUrlChange: function(method) {
+      var newUrl = window.location.href;
+      var newPath = window.location.pathname;
+      
+      // Only track if URL actually changed
+      if (newUrl !== currentUrl) {
+        
+        // Calculate time on previous page
+        var pageStart = parseInt(sessionStorage.getItem('_ts_page_start') || Date.now());
+        var timeOnPage = Date.now() - pageStart;
+        
+        // Send page_exit event for previous page if we have meaningful time data
+        if (timeOnPage > 100 && currentPath && currentPath !== newPath) {
+          addToBatch('page_exit', {
+            timeSpent: timeOnPage,
+            exitMethod: method,
+            previousPath: currentPath,
+            newPath: newPath
+          });
+        }
+        
+        // Track new pageview
+        trackPageView(method);
+        
+        // Reset scroll tracking for new page
+        if (scrollDepthTracking && scrollDepthTracking.milestones) {
+          config.scrollMilestones.forEach(function(milestone) {
+            scrollDepthTracking.milestones[milestone] = false;
+          });
+          scrollDepthTracking.maxScroll = 0;
+        }
+        
+        console.log('[Tracking] SPA navigation detected:', currentPath, '→', newPath, 'via', method);
+      }
     }
   };
 
@@ -627,11 +761,14 @@
       console.log('[Tracking] Visitor ID:', getVisitorId());
       console.log('[Tracking] Site ID:', config.siteId);
       
+      // Initialize SPA navigation detection
+      spaNavigationDetector.init();
+      
       // Initialize all tracking
       activityManager.initActivityListeners();
       scrollDepthTracking.init();
       
-      trackPageView();
+      trackPageView('initial_load');
       trackClicks();
       trackTextSelection();
       trackPageVisibility();
