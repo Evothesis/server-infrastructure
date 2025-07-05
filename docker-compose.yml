@@ -6,6 +6,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/postgres
       - ENVIRONMENT=development
+      - PIXEL_MANAGEMENT_URL=${PIXEL_MANAGEMENT_URL}
       # S3 Export Configuration
       - CLIENT_S3_BUCKET=${CLIENT_S3_BUCKET}
       - CLIENT_S3_REGION=${CLIENT_S3_REGION}
@@ -25,6 +26,9 @@ services:
       - ./api/app:/app/app  # Hot reload for FastAPI code
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
+    dns:
+    - 8.8.8.8
+    - 1.1.1.1
   
   postgres:
     image: postgres:15-alpine
@@ -62,6 +66,7 @@ services:
           memory: ${POSTGRES_MEMORY_LIMIT:-512M}
         reservations:
           memory: ${POSTGRES_MEMORY_RESERVATION:-256M}
+    
   
   nginx:
     image: nginx:alpine
