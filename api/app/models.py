@@ -21,6 +21,7 @@ class EventLog(Base):
     raw_event_data = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     processed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    client_id = Column(String(255), index=True)
     
     def __repr__(self):
         return f"<EventLog(id={self.id}, event_type='{self.event_type}', session_id='{self.session_id}')>"

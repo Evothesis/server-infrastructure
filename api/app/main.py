@@ -24,6 +24,23 @@ logger = logging.getLogger(__name__)
 logger.info(f"DATABASE_URL from env: {os.getenv('DATABASE_URL', 'NOT SET')}")
 logger.info(f"Actual DATABASE_URL being used: {DATABASE_URL}")
 
+PIXEL_MANAGEMENT_URL = os.getenv("PIXEL_MANAGEMENT_URL", "https://pixel-management-275731808857.us-central1.run.app")
+
+async def get_client_id_for_domain(domain: str) -> str:
+    """Get client_id for a domain from pixel-management"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{PIXEL_MANAGEMENT_URL}/api/v1/config/domain/{domain}")
+            if response.status_code == 200:
+                config = response.json()
+                return config.get("client_id", f"unknown_{domain}")
+            else:
+                logger.warning(f"Domain {domain} not authorized: HTTP {response.status_code}")
+                return f"unauthorized_{domain}"
+    except Exception as e:
+        logger.error(f"Failed to get client config for domain {domain}: {e}")
+        return f"error_{domain}"
+
 # Create tables
 try:
     Base.metadata.create_all(bind=engine)
@@ -176,37 +193,43 @@ def redact_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
     
     return redacted
 
-def create_event_record(event_data: Dict[str, Any], client_ip: str, user_agent: str, event_timestamp: datetime) -> Dict[str, Any]:
+def create_event_record(event_data: Dict[str, Any], client_ip: str, user_agent: str, event_timestamp: datetime, client_id: str) -> Dict[str, Any]:
     """Create a standardized event record for database insertion"""
     
-    # Redact sensitive data
+    # Redact sensitive data from nested eventData
     safe_event_data = redact_sensitive_data(event_data.get("eventData", {}))
+    
+    # Create a clean copy of the complete event data for raw_event_data
+    raw_event_data = event_data.copy()
+    if "eventData" in raw_event_data:
+        raw_event_data["eventData"] = safe_event_data
     
     return {
         "event_type": event_data.get("eventType", "unknown"),
         "session_id": event_data.get("sessionId"),
         "visitor_id": event_data.get("visitorId"),
         "site_id": event_data.get("siteId", "unknown"),
-        "event_data": safe_event_data,
-        "client_ip": client_ip,
-        "user_agent": user_agent,
         "timestamp": event_timestamp,
         "url": event_data.get("url"),
-        "referrer": event_data.get("referrer"),
+        "path": event_data.get("path"),
+        "user_agent": user_agent,
+        "ip_address": client_ip,
+        "raw_event_data": raw_event_data,
+        "client_id": client_id,
         "created_at": datetime.utcnow()
     }
 
-def process_batch_events(batch_data: Dict[str, Any], client_ip: str, user_agent: str) -> List[Dict[str, Any]]:
+def process_batch_events(batch_data: Dict[str, Any], client_ip: str, user_agent: str, client_id: str) -> List[Dict[str, Any]]:
     """Process batch events and return list of events ready for insertion"""
     individual_events = batch_data.get("events", [])
     events_to_insert = []
     
     # Process the batch wrapper as an event
     batch_timestamp = parse_timestamp(batch_data.get("timestamp", ""))
-    batch_event_record = create_event_record(batch_data, client_ip, user_agent, batch_timestamp)
+    batch_event_record = create_event_record(batch_data, client_ip, user_agent, batch_timestamp, client_id)
     events_to_insert.append(batch_event_record)
     
-    logger.info(f"Processing batch with {len(individual_events)} individual events")
+    logger.info(f"Processing batch with {len(individual_events)} individual events for client {client_id}")
     
     # Process each event in the batch
     for individual_event in individual_events:
@@ -229,7 +252,7 @@ def process_batch_events(batch_data: Dict[str, Any], client_ip: str, user_agent:
             "page": batch_data.get("page")
         }
         
-        event_record = create_event_record(complete_event_data, client_ip, user_agent, event_timestamp)
+        event_record = create_event_record(complete_event_data, client_ip, user_agent, event_timestamp, client_id)
         events_to_insert.append(event_record)
     
     return events_to_insert
@@ -557,46 +580,50 @@ async def collect_event(request: Request, db: Session = Depends(get_db)):
             # Handle GET request with query parameters
             event_data = dict(request.query_params)
         
+        # Get domain and resolve client_id
+        site_id = event_data.get("siteId", event_data.get("site_id", "unknown"))
+        client_id = await get_client_id_for_domain(site_id)
+        
         events_to_insert = []
         event_count = 0
         
         # Check if this is a batch event
         if event_data.get("eventType") == "batch":
             # Process batch events
-            events_to_insert = process_batch_events(event_data, client_ip, user_agent)
+            events_to_insert = process_batch_events(event_data, client_ip, user_agent, client_id)
             event_count = len(events_to_insert)
-            site_id = event_data.get("siteId", "unknown")
         else:
             # Process single event
             event_timestamp = parse_timestamp(event_data.get("timestamp", ""))
-            event_record = create_event_record(event_data, client_ip, user_agent, event_timestamp)
+            event_record = create_event_record(event_data, client_ip, user_agent, event_timestamp, client_id)
             events_to_insert = [event_record]
             event_count = 1
-            site_id = event_data.get("siteId", "unknown")
         
         # Bulk insert all events in a single transaction
         if events_to_insert:
             try:
                 db.bulk_insert_mappings(EventLog, events_to_insert)
                 db.commit()
-                logger.info(f"Bulk inserted {event_count} events from {site_id}")
+                logger.info(f"Bulk inserted {event_count} events for client {client_id} from site {site_id}")
+                
+                return {
+                    "status": "success",
+                    "message": f"{event_count} event(s) received and stored",
+                    "events_processed": event_count,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
             except Exception as db_error:
                 logger.error(f"Database bulk insert failed: {str(db_error)}")
                 db.rollback()
-                raise HTTPException(status_code=500, detail="Database storage failed")
-        
-        return {
-            "status": "success",
-            "message": f"{event_count} event(s) received and stored",
-            "events_processed": event_count,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
+                return {"status": "error", "message": "Database storage failed"}
+        else:
+            return {"status": "success", "message": "No events to process", "timestamp": datetime.utcnow().isoformat()}
+    
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Event collection failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return {"status": "error", "message": "Event processing failed"}
 
 @app.get("/events/count")
 async def get_event_count(db: Session = Depends(get_db)):
