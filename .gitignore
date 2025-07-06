@@ -2,6 +2,9 @@
 # Docker
 docker-compose.override.yml
 
+# Security 
+SECURITY_ASSESSMENT_REPORT.md
+
 # Database
 postgres_data/
 
