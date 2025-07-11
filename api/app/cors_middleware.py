@@ -6,6 +6,7 @@ from typing import Optional, List
 import httpx
 import logging
 import os
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -19,17 +20,19 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         self.cache: Optional[dict] = None
         self.cache_timestamp: float = 0
         self.cache_ttl: int = 300  # 5 minutes
+        self._lock = threading.Lock()
         
     async def get_allowed_origins(self) -> List[str]:
-        """Get allowed origins with caching"""
+        """Get allowed origins with thread-safe caching"""
         current_time = time.time()
         
-        # Check cache first
-        if (self.cache and 
-            current_time - self.cache_timestamp < self.cache_ttl):
-            return self.cache.get("domains", [])
+        # Thread-safe cache check
+        with self._lock:
+            if (self.cache and 
+                current_time - self.cache_timestamp < self.cache_ttl):
+                return self.cache.get("domains", [])
         
-        # Fetch from pixel-management
+        # Fetch from pixel-management (keep existing logic)
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
@@ -40,9 +43,10 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
                     data = response.json()
                     domains = data.get("domains", [])
                     
-                    # Cache the result
-                    self.cache = {"domains": domains}
-                    self.cache_timestamp = current_time
+                    # Thread-safe cache update
+                    with self._lock:
+                        self.cache = {"domains": domains}
+                        self.cache_timestamp = current_time
                     
                     logger.info(f"Updated CORS allowed origins: {len(domains)} domains")
                     return domains
@@ -52,7 +56,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Error fetching allowed origins: {e}")
         
-        # Fallback to dev origins
+        # Fallback (keep existing)
         fallback_origins = [
             "http://localhost:3000",
             "http://localhost:8080", 

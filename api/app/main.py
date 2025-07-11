@@ -20,7 +20,7 @@ from .rate_limiter import RateLimitMiddleware
 from .cors_middleware import DynamicCORSMiddleware
 from .validation_schemas import CollectionRequest
 from .validation_middleware import RequestValidationMiddleware
-from .error_handler import custom_http_exception_handler, custom_general_exception_handler
+from .error_handler import custom_general_exception_handler
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +63,6 @@ app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
 # Add exception handlers for secure error responses
-app.add_exception_handler(HTTPException, custom_http_exception_handler)
 app.add_exception_handler(Exception, custom_general_exception_handler)
 
 # ============================================================================
@@ -512,35 +511,6 @@ async def serve_pixel_js(
     except Exception as e:
         logger.error(f"Pixel generation error: {e}")
         raise HTTPException(status_code=500, detail="Pixel service error")
-
-# ============================================================================
-# Cache Management Endpoints (for debugging/ops)
-# ============================================================================
-
-@app.post("/pixel/cache/clear")
-async def clear_pixel_cache():
-    """Clear the configuration cache (useful for debugging)"""
-    config_cache.clear()
-    return {"message": "Configuration cache cleared"}
-
-@app.get("/pixel/cache/stats")
-async def get_cache_stats():
-    """Get cache statistics"""
-    current_time = time.time()
-    cache_stats = {
-        "total_entries": len(config_cache.cache),
-        "entries": []
-    }
-    
-    for key, (data, timestamp) in config_cache.cache.items():
-        cache_stats["entries"].append({
-            "client_id": key,
-            "age_seconds": int(current_time - timestamp),
-            "expires_in_seconds": int(config_cache.ttl_seconds - (current_time - timestamp)),
-            "privacy_level": data.get("privacy_level", "unknown")
-        })
-    
-    return cache_stats
 
 # ============================================================================
 # S3 Export Endpoints (existing functionality)

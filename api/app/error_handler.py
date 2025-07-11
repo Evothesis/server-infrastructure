@@ -1,24 +1,12 @@
-# Create new file: api/app/error_handler.py
+# Updated api/app/error_handler.py - Remove redundant handlers
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 import logging
 import traceback
 import os
 
 logger = logging.getLogger(__name__)
-
-async def custom_http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions with sanitized responses"""
-    # Log the full error for debugging
-    logger.warning(f"HTTP {exc.status_code} on {request.url}: {exc.detail}")
-    
-    # Return sanitized response
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.detail}
-    )
 
 async def custom_general_exception_handler(request: Request, exc: Exception):
     """Handle general exceptions with sanitized responses"""
@@ -46,12 +34,7 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
             content={"error": "Internal server error"}
         )
 
-# Sanitized error messages for common exceptions
-ERROR_MESSAGES = {
-    "ConnectionError": "Service temporarily unavailable",
-    "TimeoutError": "Request timeout",
-    "ValidationError": "Invalid request format",
-    "DatabaseError": "Data processing error",
-    "AuthenticationError": "Authentication failed",
-    "AuthorizationError": "Access denied"
-}
+# Also update api/app/main.py imports and registration:
+# REMOVE: custom_http_exception_handler import
+# REMOVE: app.add_exception_handler(HTTPException, custom_http_exception_handler)
+# KEEP: app.add_exception_handler(Exception, custom_general_exception_handler)
