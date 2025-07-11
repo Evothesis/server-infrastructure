@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks, Path
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -8,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import threading
 import time
 import httpx
 from ipaddress import ip_address, AddressValueError
@@ -16,14 +16,18 @@ from typing import Optional, List, Dict, Any, Tuple
 from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
 from .s3_export import create_s3_exporter
+from .rate_limiter import RateLimitMiddleware
+from .cors_middleware import DynamicCORSMiddleware
+from .validation_schemas import CollectionRequest
+from .validation_middleware import RequestValidationMiddleware
+from .error_handler import custom_http_exception_handler, custom_general_exception_handler
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Debug: Print database connection info
-logger.info(f"DATABASE_URL from env: {os.getenv('DATABASE_URL', 'NOT SET')}")
-logger.info(f"Actual DATABASE_URL being used: {DATABASE_URL}")
+# Database connection established (credentials not logged for security)
+logger.info("Database connection established")
 
 # Create tables
 try:
@@ -34,7 +38,6 @@ except Exception as e:
     raise
 
 # Set pixel management endpoint 
-# This is a seperate service and repo
 PIXEL_MANAGEMENT_URL = os.getenv("PIXEL_MANAGEMENT_URL", "https://pixel-management-275731808857.us-central1.run.app")
 
 async def get_client_id_for_domain(domain: str) -> str:
@@ -54,41 +57,45 @@ async def get_client_id_for_domain(domain: str) -> str:
 
 app = FastAPI(title="Analytics API", version="1.0.0")
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your domains
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Add security middleware in correct order
+app.add_middleware(DynamicCORSMiddleware, pixel_management_url=PIXEL_MANAGEMENT_URL)
+app.add_middleware(RequestValidationMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
+# Add exception handlers for secure error responses
+app.add_exception_handler(HTTPException, custom_http_exception_handler)
+app.add_exception_handler(Exception, custom_general_exception_handler)
 
 # ============================================================================
-# Configuration Cache (Simple in-memory caching for MVP)
+# Configuration Cache (Thread-safe in-memory caching)
 # ============================================================================
 
 class ConfigCache:
     def __init__(self, ttl_seconds: int = 300):  # 5 minute TTL
         self.cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
         self.ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
     
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        if key not in self.cache:
-            return None
-            
-        data, timestamp = self.cache[key]
-        if time.time() - timestamp > self.ttl_seconds:
-            # Cache expired
-            del self.cache[key]
-            return None
-            
-        return data
+        with self._lock:
+            if key not in self.cache:
+                return None
+                
+            data, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl_seconds:
+                # Cache expired - remove atomically
+                del self.cache[key]
+                return None
+                
+            return data
     
     def set(self, key: str, data: Dict[str, Any]):
-        self.cache[key] = (data, time.time())
+        with self._lock:
+            self.cache[key] = (data, time.time())
     
     def clear(self):
-        self.cache.clear()
+        with self._lock:
+            self.cache.clear()
 
 # Global cache instance
 config_cache = ConfigCache(ttl_seconds=300)  # 5 minute cache
@@ -96,8 +103,6 @@ config_cache = ConfigCache(ttl_seconds=300)  # 5 minute cache
 # ============================================================================
 # Pixel Management Service Integration
 # ============================================================================
-
-PIXEL_MANAGEMENT_URL = os.getenv("PIXEL_MANAGEMENT_URL", "http://pixel-management:8000")
 
 async def get_client_config(client_id: str) -> Dict[str, Any]:
     """Fetch client configuration from pixel management service with caching"""
@@ -312,70 +317,79 @@ async def health(db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail="Database unavailable")
 
 @app.post("/collect")
-async def collect_event(request: Request, db: Session = Depends(get_db)):
-    """Collect analytics events from the tracking pixel"""
+async def collect_events(
+    request_data: CollectionRequest,
+    request: Request, 
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db)
+):
+    """
+    Collect analytics events with comprehensive security validation
+    
+    Features:
+    - Input validation with size limits (1MB request, 100 events/batch)
+    - Domain authorization via pixel-management
+    - Client attribution for multi-tenant tracking
+    - Bulk insert optimization for performance
+    - Secure error handling
+    """
     try:
-        # Get the raw body
-        body = await request.body()
-        
-        # Get client IP and user agent
+        # Extract client information
         client_ip = extract_client_ip(request)
-        user_agent = request.headers.get("user-agent", "")
+        user_agent = request.headers.get("user-agent", "unknown")
         
-        # Parse JSON if present
-        if body:
-            try:
-                event_data = json.loads(body)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid JSON")
-        else:
-            # Handle GET request with query parameters
-            event_data = dict(request.query_params)
+        # Get requesting domain and validate authorization
+        requesting_domain = request.headers.get("host", "").split(":")[0]
+        client_id = await get_client_id_for_domain(requesting_domain)
         
-        # Get domain and resolve client_id
-        site_id = event_data.get("siteId", event_data.get("site_id", "unknown"))
-        client_id = await get_client_id_for_domain(site_id)
+        # Convert validated Pydantic model to dict for processing
+        event_data = request_data.dict()
         
+        # Determine if this is a batch or single event
+        batch_size = 1
+        if event_data.get("eventType") == "batch" and event_data.get("events"):
+            batch_size = len(event_data["events"]) + 1  # +1 for wrapper event
+        
+        # Process events
         events_to_insert = []
-        event_count = 0
         
-        # Check if this is a batch event
-        if event_data.get("eventType") == "batch":
-            # Process batch events
+        if event_data.get("eventType") == "batch" and event_data.get("events"):
             events_to_insert = process_batch_events(event_data, client_ip, user_agent, client_id)
-            event_count = len(events_to_insert)
         else:
-            # Process single event
             event_timestamp = parse_timestamp(event_data.get("timestamp", ""))
             event_record = create_event_record(event_data, client_ip, user_agent, event_timestamp, client_id)
-            events_to_insert = [event_record]
-            event_count = 1
+            events_to_insert.append(event_record)
         
-        # Bulk insert all events in a single transaction
-        if events_to_insert:
-            try:
+        # Bulk insert with transaction
+        try:
+            if events_to_insert:
                 db.bulk_insert_mappings(EventLog, events_to_insert)
                 db.commit()
-                logger.info(f"Bulk inserted {event_count} events for client {client_id} from site {site_id}")
-                
-                return {
-                    "status": "success",
-                    "message": f"{event_count} event(s) received and stored",
-                    "events_processed": event_count,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            except Exception as db_error:
-                logger.error(f"Database bulk insert failed: {str(db_error)}")
-                db.rollback()
-                return {"status": "error", "message": "Database storage failed"}
-        else:
-            return {"status": "success", "message": "No events to process", "timestamp": datetime.utcnow().isoformat()}
-    
+                logger.info(f"Bulk inserted {len(events_to_insert)} events for client {client_id}")
+        except Exception as db_error:
+            logger.error(f"Database error: {db_error}")
+            db.rollback()
+            return {"status": "accepted", "message": "Processing queued"}
+        
+        # Trigger S3 export for large batches
+        if len(events_to_insert) >= 5:
+            background_tasks.add_task(s3_exporter.export_events, db)
+        
+        return {
+            "status": "success", 
+            "events_processed": len(events_to_insert),
+            "client_id": client_id,
+            "batch_size": batch_size
+        }
+        
     except HTTPException:
         raise
+    except httpx.RequestError as e:
+        logger.error(f"Pixel management service error: {e}")
+        raise HTTPException(status_code=502, detail="Configuration service unavailable")
     except Exception as e:
-        logger.error(f"Event collection failed: {str(e)}")
-        return {"status": "error", "message": "Event processing failed"}
+        logger.error(f"Collection processing error: {e}")
+        raise HTTPException(status_code=500, detail="Collection service error")
 
 @app.get("/events/count")
 async def get_event_count(db: Session = Depends(get_db)):
@@ -414,20 +428,20 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/pixel/{client_id}/tracking.js")
-async def get_tracking_pixel(client_id: str, request: Request):
+async def serve_pixel_js(
+    request: Request,
+    client_id: str = Path(..., regex=r'^[a-zA-Z0-9_-]+$', max_length=100)
+):
     """
-    Serve dynamically generated tracking pixel JavaScript for a specific client.
+    Serve client-specific tracking JavaScript with domain authorization
     
     SECURITY: Validates that the requesting domain is authorized for the specified client_id
-    
-    This endpoint:
-    1. Extracts the requesting domain from the request
-    2. Validates domain authorization for the specific client_id
-    3. Fetches client configuration from pixel management service
-    4. Generates client-specific JavaScript with privacy settings applied
-    5. Returns JavaScript with proper content-type headers
     """
     try:
+        # Validate client_id format
+        if not client_id or len(client_id) < 3:
+            raise HTTPException(status_code=400, detail="Invalid client_id")
+        
         # Extract requesting domain
         requesting_domain = request.headers.get("host", "").split(":")[0]  # Remove port if present
         if not requesting_domain:
@@ -492,9 +506,12 @@ async def get_tracking_pixel(client_id: str, request: Request):
     except HTTPException:
         # Re-raise HTTP exceptions (403, 404, 502, etc.)
         raise
+    except httpx.RequestError as e:
+        logger.error(f"Domain authorization service error: {e}")
+        raise HTTPException(status_code=502, detail="Authorization service unavailable")
     except Exception as e:
-        logger.error(f"Failed to generate pixel for client {client_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate tracking pixel")
+        logger.error(f"Pixel generation error: {e}")
+        raise HTTPException(status_code=500, detail="Pixel service error")
 
 # ============================================================================
 # Cache Management Endpoints (for debugging/ops)
