@@ -264,34 +264,6 @@ def process_batch_events(batch_data: Dict[str, Any], client_ip: str, user_agent:
     return events_to_insert
 
 # ============================================================================
-# Pixel Template System
-# ============================================================================
-def get_base_tracking_code() -> str:
-    """Read the base tracking pixel JavaScript template from file"""
-    # Path to the template file
-    template_path = Path(__file__).parent.parent / "tracking" / "pixel-template.js"
-    
-    if template_path.exists():
-        with open(template_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    else:
-        # Fail safely for compliance reasons
-        logger.error(f"Pixel template not found at {template_path}")
-        raise FileNotFoundError(f"Pixel template file not found: {template_path}")
-
-def generate_pixel_javascript(config: Dict[str, Any]) -> str:
-    """Generate client-specific tracking pixel JavaScript"""
-    
-    # Get base template
-    pixel_code = get_base_tracking_code()
-    
-    # Inject client configuration
-    config_json = json.dumps(config, indent=2)
-    pixel_code = pixel_code.replace('{CONFIG_PLACEHOLDER}', config_json)
-    
-    return pixel_code
-
-# ============================================================================
 # API Endpoints
 # ============================================================================
 
@@ -421,95 +393,6 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
         logger.error(f"Failed to get recent events: {e}")
         raise HTTPException(status_code=500, detail="Database query failed")
 
-# ============================================================================
-# Dynamic Pixel Endpoint
-# ============================================================================
-
-@app.get("/pixel/{client_id}/tracking.js")
-async def serve_pixel_js(
-    request: Request,
-    client_id: str = Path(..., regex=r'^[a-zA-Z0-9_-]+$', max_length=100)
-):
-    """
-    Serve client-specific tracking JavaScript with domain authorization
-    
-    SECURITY: Validates that the requesting domain is authorized for the specified client_id
-    """
-    try:
-        # Validate client_id format
-        if not client_id or len(client_id) < 3:
-            raise HTTPException(status_code=400, detail="Invalid client_id")
-        
-        # Extract requesting domain
-        requesting_domain = request.headers.get("host", "").split(":")[0]  # Remove port if present
-        if not requesting_domain:
-            logger.warning("No host header in pixel request")
-            raise HTTPException(status_code=400, detail="Invalid request - missing host header")
-        
-        # SECURITY CHECK: Validate domain authorization for this specific client
-        try:
-            async with httpx.AsyncClient() as http_client:
-                domain_response = await http_client.get(
-                    f"{PIXEL_MANAGEMENT_URL}/api/v1/config/domain/{requesting_domain}",
-                    timeout=5.0
-                )
-                
-                if domain_response.status_code == 404:
-                    logger.warning(f"Domain {requesting_domain} not authorized for any client")
-                    raise HTTPException(status_code=403, detail="Domain not authorized")
-                
-                if domain_response.status_code != 200:
-                    logger.error(f"Domain authorization check failed: {domain_response.status_code}")
-                    raise HTTPException(status_code=502, detail="Authorization service unavailable")
-                
-                domain_config = domain_response.json()
-                authorized_client_id = domain_config.get("client_id")
-                
-                # Check if the requesting domain is authorized for the specific client_id
-                if authorized_client_id != client_id:
-                    logger.warning(f"Domain {requesting_domain} authorized for {authorized_client_id}, not {client_id}")
-                    raise HTTPException(
-                        status_code=403, 
-                        detail=f"Domain {requesting_domain} not authorized for client {client_id}"
-                    )
-                
-        except httpx.RequestError as e:
-            logger.error(f"Failed to validate domain authorization: {e}")
-            raise HTTPException(status_code=502, detail="Authorization service unavailable")
-        
-        # If we get here, domain is authorized for this client_id
-        logger.info(f"Domain {requesting_domain} validated for client {client_id}")
-        
-        # Get client configuration (we already validated authorization)
-        config = await get_client_config(client_id)
-        
-        # Generate pixel JavaScript
-        pixel_js = generate_pixel_javascript(config)
-        
-        logger.info(f"Generated pixel for client {client_id} from authorized domain {requesting_domain}")
-        
-        # Return JavaScript with proper headers
-        return Response(
-            content=pixel_js,
-            media_type="application/javascript",
-            headers={
-                "Cache-Control": "public, max-age=300",  # 5 minute browser cache
-                "Content-Type": "application/javascript; charset=utf-8",
-                "X-Client-ID": client_id,
-                "X-Authorized-Domain": requesting_domain,
-                "X-Privacy-Level": config.get('privacy_level', 'standard')
-            }
-        )
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions (403, 404, 502, etc.)
-        raise
-    except httpx.RequestError as e:
-        logger.error(f"Domain authorization service error: {e}")
-        raise HTTPException(status_code=502, detail="Authorization service unavailable")
-    except Exception as e:
-        logger.error(f"Pixel generation error: {e}")
-        raise HTTPException(status_code=500, detail="Pixel service error")
 
 # ============================================================================
 # S3 Export Endpoints (existing functionality)
