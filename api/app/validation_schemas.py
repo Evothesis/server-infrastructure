@@ -1,4 +1,3 @@
-
 # Create new file: api/app/validation_schemas.py
 
 from pydantic import BaseModel, validator, Field
@@ -9,8 +8,8 @@ import json
 class EventData(BaseModel):
     """Individual event data with size limits"""
     class Config:
-        # Limit individual event size to 10KB
-        max_anystr_length = 10000
+        # Pydantic v2 fix: renamed from max_anystr_length
+        str_max_length = 10000
         
     # Allow any additional fields but validate size
     def __init__(self, **data):
@@ -82,7 +81,8 @@ class CollectionRequest(BaseModel):
 
 class ClientIdPath(BaseModel):
     """Path parameter validation for client_id"""
-    client_id: str = Field(..., regex=r'^[a-zA-Z0-9_-]+$', max_length=100)
+    # Pydantic v2 fix: renamed from regex to pattern
+    client_id: str = Field(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=100)
     
     @validator('client_id')
     def validate_client_id_format(cls, v):

@@ -6,7 +6,6 @@ from datetime import datetime
 import json
 import logging
 import os
-from pathlib import Path
 import threading
 import time
 import httpx
