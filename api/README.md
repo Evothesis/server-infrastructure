@@ -1,6 +1,6 @@
 # Collection API - FastAPI Event Processing Service
 
-**High-performance event collection with bulk processing optimization and client attribution**
+**High-performance event collection backend that receives tracking data from client websites with domain authorization validation and bulk processing optimization**
 
 ## 🚀 Performance Overview
 

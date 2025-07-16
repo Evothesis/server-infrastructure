@@ -47,38 +47,31 @@ CREATE TABLE events_log (
     event_type VARCHAR(50) NOT NULL,           -- 'pageview', 'click', 'batch'
     session_id VARCHAR(100),                   -- User session identifier
     visitor_id VARCHAR(100),                   -- Anonymous visitor ID
-    site_id VARCHAR(255) NOT NULL,             -- Domain (e.g., 'shop.acme.com')
-    client_id VARCHAR(100),                    -- Resolved from pixel-management
-    
-    -- Event data storage (flexible JSONB)
-    event_data JSONB,                          -- Custom event properties
-    page_data JSONB,                           -- Page context (URL, title, etc.)
+    site_id VARCHAR(100),                      -- Domain (e.g., 'shop.acme.com')
+    timestamp TIMESTAMPTZ NOT NULL,            -- Event occurrence time
+    url TEXT,                                  -- Full page URL
+    path VARCHAR(500),                         -- URL path component
     user_agent TEXT,                           -- Browser information
-    ip_address INET,                           -- Client IP (may be hashed)
-    referrer TEXT,                             -- HTTP referrer
-    
-    -- Timing and processing
-    timestamp TIMESTAMPTZ DEFAULT NOW(),       -- Event occurrence time
+    ip_address INET,                           -- Client IP address
+    raw_event_data JSONB NOT NULL,             -- Complete event payload
     created_at TIMESTAMPTZ DEFAULT NOW(),      -- Database insertion time
-    processed_at TIMESTAMPTZ,                  -- S3 export completion
-    
-    -- Performance and compliance
-    batch_id UUID,                             -- Links events from same batch
-    privacy_level VARCHAR(20) DEFAULT 'standard', -- 'standard', 'gdpr', 'hipaa'
-    export_status VARCHAR(20) DEFAULT 'pending'   -- 'pending', 'exported', 'failed'
+    processed_at TIMESTAMPTZ                   -- S3 export completion timestamp
 );
 ```
 
+> **Note**: Client attribution is handled at the application level via SQLAlchemy models, which add a `client_id` field not present in the SQL schema.
+
 ### Optimized Indexes
 ```sql
--- Minimal indexes for performance
-CREATE INDEX idx_events_log_created_at ON events_log (created_at);
-CREATE INDEX idx_events_log_client_id ON events_log (client_id);
-CREATE INDEX idx_events_log_export_status ON events_log (export_status, created_at);
+-- Performance indexes for common queries
+CREATE INDEX idx_events_log_timestamp ON events_log(timestamp);
+CREATE INDEX idx_events_log_site_created ON events_log(site_id, created_at);
+CREATE INDEX idx_events_log_session ON events_log(session_id);
+CREATE INDEX idx_events_log_event_type ON events_log(event_type);
+CREATE INDEX idx_events_log_processed ON events_log(processed_at);
 
--- Composite index for client reporting
-CREATE INDEX idx_events_log_client_reporting 
-ON events_log (client_id, created_at, event_type);
+-- JSONB indexes for flexible queries
+CREATE INDEX idx_events_log_raw_data_gin ON events_log USING gin(raw_event_data);
 ```
 
 ## ⚡ Bulk Processing Optimization

@@ -1,21 +1,22 @@
 # Server Infrastructure - Analytics Collection Platform
 
-**High-performance event collection infrastructure with client attribution and bulk processing optimizations**
+**High-performance event collection backend that receives tracking data from client websites with domain authorization and bulk processing optimizations**
 
 ## 🏗️ System Architecture
 
 ```
 ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
-│ Pixel Management    │───▶│ Server Infrastructure│───▶│  Client Websites   │
-│ - Client configs    │    │ - Domain validation  │    │ - Authorized domains│
-│ - Domain auth API   │    │ - Event collection   │    │ - Client attribution│
-│ - Privacy settings  │    │ - Bulk processing    │    │ - Real-time tracking│
+│ Pixel Management    │    │ Server Infrastructure│◄───│  Client Websites   │
+│ - Serves tracking   │    │ - Event collection   │    │ - Load pixel from   │
+│   pixel to websites │    │ - Domain validation  │    │   pixel-management  │
+│ - Domain auth API   │◄───│ - Bulk processing    │    │ - Send events to    │
+│ - Privacy settings  │    │ - Client attribution │    │   server infra      │
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
-          │                           │                           │
-          ▼                           ▼                           ▼
+          │                           │                           
+          ▼                           ▼                           
     ┌─────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
     │  Firestore DB   │    │   PostgreSQL        │    │    S3 Export        │
-    │ - Domain index  │    │ - Event buffer      │    │ - Client buckets    │
+    │ - Domain index  │    │ - Event storage     │    │ - Client buckets    │
     │ - Client data   │    │ - Bulk optimized    │    │ - Backup/metering   │
     └─────────────────┘    └─────────────────────┘    └─────────────────────┘
 ```
@@ -44,20 +45,11 @@
 
 ```
 server-infrastructure/
-├── api/                    # FastAPI collection service
-│   ├── app/
-│   │   ├── main.py        # Bulk optimized endpoints
-│   │   ├── client_auth.py # Domain authorization
-│   │   └── models.py      # Event schemas
-│   └── Dockerfile
-├── database/              # PostgreSQL schema
-│   ├── 01_init.sql       # Optimized event storage
-│   └── README.md
-├── tracking/              # JavaScript pixel
-│   ├── js/tracking.js    # Client-attributed tracking
-│   └── testing/          # Integration tests
-├── nginx/                # Reverse proxy
-├── docker-compose.yml    # Multi-service orchestration
+├── api/                    # FastAPI event collection service
+├── database/              # PostgreSQL schema and initialization
+├── tracking/              # Integration testing and examples
+├── nginx/                # Reverse proxy configuration
+├── docker-compose.yml    # Service orchestration
 └── .env.development      # Configuration templates
 ```
 
@@ -74,7 +66,7 @@ docker compose --env-file .env.development up -d
 
 # 3. Verify integration
 curl http://localhost:8000/health                    # API health
-curl http://localhost/pixel/client_test/tracking.js  # Client pixel
+curl http://localhost:8000/collect                   # Event collection endpoint
 ```
 
 ### Production Deployment
@@ -108,18 +100,18 @@ db.commit()  # 20M transactions/month (90% reduction)
 ```
 
 ### Performance Benchmarks
-- **Event Volume**: 200M+ events/month per VM
-- **Processing Time**: <1ms per batch vs. 10ms+ per individual event
+- **Event Volume**: 200M+ events/month capacity per VM
+- **Processing Time**: <1ms per batch with bulk processing
 - **Database Load**: 90% reduction in transaction overhead
-- **Infrastructure Cost**: 80% reduction due to efficiency gains
+- **Scalability**: Handles burst traffic through intelligent batching
 
-## 🔧 Client Integration
+## 🔧 Integration with Pixel Management System
 
-### Domain Authorization Flow
-1. Pixel loads from client-specific URL: `/pixel/{client_id}/tracking.js`
-2. Server validates domain authorization via pixel-management API
-3. Events collected with automatic client attribution
-4. Bulk processing maintains client isolation
+### Event Collection Flow
+1. Client websites load tracking pixel from pixel-management system
+2. Websites send tracking events directly to this server infrastructure's `/collect` endpoint
+3. Server validates domain authorization via pixel-management API before processing
+4. Authorized events processed with automatic client attribution and bulk optimization
 
 ### Configuration Integration
 ```bash

@@ -1,10 +1,10 @@
-# Tracking Pixel - Client-Attributed JavaScript Library
+# Tracking Integration - Event Collection Backend
 
-**High-performance analytics pixel with domain authorization and bulk event processing**
+**Server infrastructure that receives and processes tracking events from client websites with domain authorization**
 
 ## 🚀 Overview
 
-Client-specific JavaScript tracking library integrating with pixel-management for domain authorization and bulk event collection.
+This server infrastructure receives tracking events directly from client websites (that have loaded pixels from the pixel-management system) and processes them with domain authorization validation and bulk event optimization.
 
 ### Key Features
 - **Client Attribution**: Automatic client resolution via domain authorization
@@ -16,60 +16,41 @@ Client-specific JavaScript tracking library integrating with pixel-management fo
 
 ```
 tracking/
-├── js/
-│   └── tracking.js         # Main tracking library
 ├── testing/
 │   ├── index.html         # Demo integration site
-│   ├── README.md          # Testing documentation
-│   └── integration-test.js # Automated testing
+│   ├── products.html      # E-commerce simulation  
+│   ├── contact.html       # Contact form testing
+│   └── README.md          # Testing documentation
 └── README.md              # This documentation
 ```
 
+> **Note**: The JavaScript tracking library is served by the pixel-management system, not from this repository.
+
 ## 🔧 Integration
 
-### Client-Specific Pixel Loading
-```html
-<!-- Production integration (client-specific URL) -->
-<script src="https://client-vm.evothesis.com/pixel/client_acme_corp/tracking.js"></script>
+### Event Collection Flow
+1. Client websites load tracking pixels from the pixel-management system
+2. Websites send collected events directly to this server infrastructure's `/collect` endpoint
+3. Server validates domain authorization with pixel-management API
+4. Authorized events are processed and stored with client attribution
 
-<!-- Development integration (shared testing) -->
-<script src="http://localhost/pixel/client_test/tracking.js"></script>
-```
+### Server Configuration
+This server infrastructure requires configuration to connect to the pixel-management system for domain authorization:
 
-### Manual Initialization
-```javascript
-// Advanced integration with custom configuration
-window.EvothesisConfig = {
-  client_id: 'client_acme_corp',
-  endpoint: 'https://client-vm.evothesis.com/collect',
-  batch_size: 20,
-  flush_interval: 5000,
-  privacy_mode: 'gdpr'  // 'standard', 'gdpr', 'hipaa'
-};
-
-// Load tracking script
-const script = document.createElement('script');
-script.src = '/js/tracking.js';
-document.head.appendChild(script);
+```bash
+PIXEL_MANAGEMENT_URL=https://pixel-management-url.run.app
+CLIENT_S3_BUCKET=client-analytics-bucket
+BACKUP_S3_BUCKET=backup-analytics-bucket
 ```
 
 ## ⚡ Performance Features
 
-### Intelligent Event Batching
-```javascript
-// Automatic batching - events collected and sent together
-evothesis.track('click', {element: 'button1'});      // Queued
-evothesis.track('scroll', {depth: 25});              // Queued  
-evothesis.track('form_focus', {field: 'email'});     // Queued
-// ... all sent together in single request after 5s or 20 events
-```
-
 ### Bulk Processing Flow
-1. Events queued in memory with intelligent batching
-2. Periodic flush (5s timeout) or size-based flush (20 events)
-3. Single POST to `/collect` with `eventType: "batch"`
-4. Server processes entire batch in single database transaction
-5. 50-100x performance improvement vs. individual requests
+1. Tracking pixel (from pixel-management) collects events on client websites
+2. Events sent to this server's `/collect` endpoint in batches
+3. Server validates domain authorization with pixel-management API
+4. Authorized events processed in bulk database transactions
+5. Significant performance improvement through batch processing
 
 ## 📊 Event Types
 
