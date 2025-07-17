@@ -22,6 +22,8 @@ class EventLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     processed_at = Column(DateTime(timezone=True), nullable=True, index=True)
     client_id = Column(String(255), index=True)
+    batch_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # ADDED: For bulk processing
+    export_status = Column(String(20), default='pending', index=True)  # ADDED: For S3 export tracking
     
     def __repr__(self):
-        return f"<EventLog(id={self.id}, event_type='{self.event_type}', session_id='{self.session_id}')>"
+        return f"<EventLog(id={self.id}, event_type='{self.event_type}', session_id='{self.session_id}', client_id='{self.client_id}')>"

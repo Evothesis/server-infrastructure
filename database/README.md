@@ -41,9 +41,9 @@ Raw Events (tracking.js)
 Primary table handling 200M+ events/month with client attribution:
 
 ```sql
-CREATE TABLE events_log (
+CREATE TABLE IF NOT EXISTS events_log (
     id SERIAL PRIMARY KEY,
-    event_id UUID DEFAULT gen_random_uuid(),
+    event_id UUID DEFAULT gen_random_uuid() NOT NULL,
     event_type VARCHAR(50) NOT NULL,           -- 'pageview', 'click', 'batch'
     session_id VARCHAR(100),                   -- User session identifier
     visitor_id VARCHAR(100),                   -- Anonymous visitor ID
@@ -55,23 +55,25 @@ CREATE TABLE events_log (
     ip_address INET,                           -- Client IP address
     raw_event_data JSONB NOT NULL,             -- Complete event payload
     created_at TIMESTAMPTZ DEFAULT NOW(),      -- Database insertion time
-    processed_at TIMESTAMPTZ                   -- S3 export completion timestamp
+    processed_at TIMESTAMPTZ,                  -- S3 export completion timestamp
+    client_id VARCHAR(255)                     -- Client attribution via domain resolution
 );
 ```
-
-> **Note**: Client attribution is handled at the application level via SQLAlchemy models, which add a `client_id` field not present in the SQL schema.
 
 ### Optimized Indexes
 ```sql
 -- Performance indexes for common queries
-CREATE INDEX idx_events_log_timestamp ON events_log(timestamp);
-CREATE INDEX idx_events_log_site_created ON events_log(site_id, created_at);
-CREATE INDEX idx_events_log_session ON events_log(session_id);
-CREATE INDEX idx_events_log_event_type ON events_log(event_type);
-CREATE INDEX idx_events_log_processed ON events_log(processed_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_timestamp ON events_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_log_site_created ON events_log(site_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_session ON events_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_log_event_type ON events_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_log_processed ON events_log(processed_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_client_id ON events_log(client_id);
+CREATE INDEX IF NOT EXISTS idx_events_log_visitor_id ON events_log(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_events_log_created_at ON events_log(created_at);
 
 -- JSONB indexes for flexible queries
-CREATE INDEX idx_events_log_raw_data_gin ON events_log USING gin(raw_event_data);
+CREATE INDEX IF NOT EXISTS idx_events_log_raw_data_gin ON events_log USING gin(raw_event_data);
 ```
 
 ## ⚡ Bulk Processing Optimization
@@ -79,16 +81,16 @@ CREATE INDEX idx_events_log_raw_data_gin ON events_log USING gin(raw_event_data)
 ### Batch Insert Architecture
 ```sql
 -- Traditional approach (slow)
-INSERT INTO events_log (event_type, site_id, client_id, event_data) 
+INSERT INTO events_log (event_type, site_id, client_id, raw_event_data) 
 VALUES ('click', 'shop.acme.com', 'client_acme_corp', '{"element": "button1"}');
 -- Repeat 1000x = 1000 transactions
 
 -- Bulk approach (fast)
-INSERT INTO events_log (event_type, site_id, client_id, event_data, batch_id) 
+INSERT INTO events_log (event_type, site_id, client_id, raw_event_data) 
 VALUES 
-('click', 'shop.acme.com', 'client_acme_corp', '{"element": "button1"}', 'batch_uuid'),
-('scroll', 'shop.acme.com', 'client_acme_corp', '{"depth": 25}', 'batch_uuid'),
-('form_focus', 'shop.acme.com', 'client_acme_corp', '{"field": "email"}', 'batch_uuid');
+('click', 'shop.acme.com', 'client_acme_corp', '{"element": "button1"}'),
+('scroll', 'shop.acme.com', 'client_acme_corp', '{"depth": 25}'),
+('form_focus', 'shop.acme.com', 'client_acme_corp', '{"field": "email"}');
 -- 1000 events = 1 transaction (1000x faster)
 ```
 
@@ -105,7 +107,7 @@ VALUES
 2. API queries pixel-management: `/api/v1/config/domain/shop.acme.com`
 3. Returns `client_id: "client_acme_corp"`
 4. Event enriched with client attribution before bulk insert
-5. All batch events tagged with same `client_id` and `batch_id`
+5. All batch events tagged with same `client_id`
 
 ### Multi-Tenant Data Isolation
 ```sql
@@ -119,7 +121,7 @@ GROUP BY event_type;
 -- Client-specific export query
 SELECT * FROM events_log 
 WHERE client_id = 'client_acme_corp' 
-  AND export_status = 'pending'
+  AND processed_at IS NULL
 ORDER BY created_at;
 ```
 
@@ -129,16 +131,15 @@ ORDER BY created_at;
 ```sql
 -- Mark events as exported
 UPDATE events_log 
-SET export_status = 'exported', 
-    processed_at = NOW() 
+SET processed_at = NOW() 
 WHERE client_id = 'client_acme_corp' 
-  AND export_status = 'pending'
+  AND processed_at IS NULL
   AND created_at < NOW() - INTERVAL '1 hour';
 
 -- Export metrics for billing
 SELECT client_id, 
        COUNT(*) as total_events,
-       COUNT(CASE WHEN export_status = 'exported' THEN 1 END) as exported_events,
+       COUNT(CASE WHEN processed_at IS NOT NULL THEN 1 END) as exported_events,
        MAX(processed_at) as last_export
 FROM events_log 
 WHERE created_at >= DATE_TRUNC('day', NOW())
@@ -149,13 +150,13 @@ GROUP BY client_id;
 ```sql
 -- Cleanup exported events (configurable retention)
 DELETE FROM events_log 
-WHERE export_status = 'exported' 
+WHERE processed_at IS NOT NULL 
   AND processed_at < NOW() - INTERVAL '7 days';
 
 -- Archive old pending events
 UPDATE events_log 
-SET export_status = 'archived' 
-WHERE export_status = 'pending' 
+SET processed_at = NOW() 
+WHERE processed_at IS NULL 
   AND created_at < NOW() - INTERVAL '30 days';
 ```
 
@@ -163,14 +164,6 @@ WHERE export_status = 'pending'
 
 ### Key Performance Queries
 ```sql
--- Bulk insert verification (all events should have same created_at)
-SELECT batch_id, client_id, COUNT(*), MIN(created_at), MAX(created_at)
-FROM events_log 
-WHERE created_at > NOW() - INTERVAL '1 hour'
-  AND batch_id IS NOT NULL
-GROUP BY batch_id, client_id
-HAVING MIN(created_at) != MAX(created_at);  -- Should return no rows
-
 -- Client attribution success rate
 SELECT 
   COUNT(*) FILTER (WHERE client_id IS NOT NULL) * 100.0 / COUNT(*) as attribution_rate,
@@ -179,10 +172,13 @@ FROM events_log
 WHERE created_at > NOW() - INTERVAL '1 hour';
 
 -- Export pipeline health
-SELECT export_status, COUNT(*), AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/3600) as avg_age_hours
+SELECT 
+  CASE WHEN processed_at IS NOT NULL THEN 'exported' ELSE 'pending' END as status,
+  COUNT(*), 
+  AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/3600) as avg_age_hours
 FROM events_log 
 WHERE created_at > NOW() - INTERVAL '24 hours'
-GROUP BY export_status;
+GROUP BY CASE WHEN processed_at IS NOT NULL THEN 'exported' ELSE 'pending' END;
 ```
 
 ### Database Health Checks
@@ -240,8 +236,11 @@ DATABASE_POOL_SIZE = 30
 -- IP hashing for GDPR clients
 UPDATE events_log 
 SET ip_address = md5(ip_address::text)::inet 
-WHERE privacy_level = 'gdpr' 
-  AND ip_address IS NOT NULL;
+WHERE client_id IN (
+  SELECT client_id FROM pixel_management_clients 
+  WHERE privacy_level = 'gdpr'
+)
+AND ip_address IS NOT NULL;
 
 -- Data subject deletion (by visitor_id)
 DELETE FROM events_log 
@@ -252,7 +251,7 @@ WHERE visitor_id = 'vis_gdpr_deletion_request'
 ### Audit Trail
 ```sql
 -- Complete event provenance
-SELECT client_id, site_id, event_type, created_at, batch_id, export_status
+SELECT client_id, site_id, event_type, created_at, processed_at
 FROM events_log 
 WHERE visitor_id = 'vis_audit_request'
 ORDER BY created_at;
@@ -270,22 +269,21 @@ docker compose exec postgres psql -U postgres -d postgres
 \d events_log  -- Describe events_log table
 
 # Test bulk insert
-INSERT INTO events_log (event_type, site_id, client_id, batch_id, event_data) 
+INSERT INTO events_log (event_type, site_id, client_id, raw_event_data) 
 VALUES 
-('test1', 'localhost', 'client_test', gen_random_uuid(), '{"test": true}'),
-('test2', 'localhost', 'client_test', gen_random_uuid(), '{"test": true}');
+('test1', 'localhost', 'client_test', '{"test": true}'),
+('test2', 'localhost', 'client_test', '{"test": true}');
 ```
 
 ### Performance Testing
 ```bash
 # Generate test data
 docker compose exec postgres psql -U postgres -d postgres -c "
-INSERT INTO events_log (event_type, site_id, client_id, batch_id, event_data)
+INSERT INTO events_log (event_type, site_id, client_id, raw_event_data)
 SELECT 
   'test_event', 
   'localhost', 
   'client_test', 
-  gen_random_uuid(), 
   '{\"test\": true}'::jsonb
 FROM generate_series(1, 10000);"
 

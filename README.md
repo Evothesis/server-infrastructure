@@ -31,9 +31,9 @@
 
 **🔒 Client Attribution & Security**
 - Domain authorization via pixel-management integration
-- Client-specific pixel serving with real-time config
 - Unauthorized domain blocking at collection layer
 - Privacy compliance (GDPR/HIPAA) per client settings
+- Multi-tenant data isolation
 
 **📊 Multi-Tenant Architecture**
 - Shared infrastructure with client isolation
@@ -47,7 +47,8 @@
 server-infrastructure/
 ├── api/                    # FastAPI event collection service
 ├── database/              # PostgreSQL schema and initialization
-├── tracking/              # Integration testing and examples
+├── tracking/              # Integration testing demo site
+│   └── testing/           # HTML test files for browser testing
 ├── nginx/                # Reverse proxy configuration
 ├── docker-compose.yml    # Service orchestration
 └── .env.development      # Configuration templates
@@ -65,8 +66,8 @@ cd server-infrastructure
 docker compose --env-file .env.development up -d
 
 # 3. Verify integration
-curl http://localhost:8000/health                    # API health
-curl http://localhost:8000/collect                   # Event collection endpoint
+curl http://localhost:8001/health                    # API health
+curl http://localhost:8001/collect                   # Event collection endpoint
 ```
 
 ### Production Deployment
@@ -121,19 +122,87 @@ CLIENT_S3_BUCKET=client-analytics-bucket
 BACKUP_S3_BUCKET=evothesis-analytics-backup
 ```
 
+## 🧪 Testing & Development
+
+### Integration Test Site
+The repository includes a comprehensive test site for validating the complete analytics pipeline:
+
+```
+tracking/testing/
+├── index.html          # Homepage with comprehensive interaction testing
+├── products.html       # E-commerce simulation with form testing
+└── contact.html        # Contact page with lead generation forms
+```
+
+**Test Site Features:**
+- **Page Views**: Full attribution tracking with UTM parameters
+- **User Interactions**: Clicks, form submissions, text selection/copy
+- **Behavioral Analytics**: Scroll depth tracking and session management
+- **E-commerce Simulation**: Product pages with cart interactions
+- **Form Testing**: Contact forms and inquiry submissions
+
+### Local Testing
+```bash
+# Start development environment
+docker compose --env-file .env.development up -d
+
+# Access test site
+open http://localhost
+
+# Monitor event collection
+docker compose logs -f fastapi | grep "Bulk inserted"
+```
+
+### API Testing
+```bash
+# Test single event
+curl -X POST http://localhost:8001/collect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventType": "pageview",
+    "sessionId": "test_session",
+    "visitorId": "test_visitor",
+    "siteId": "localhost",
+    "url": "http://localhost/test"
+  }'
+
+# Test batch processing
+curl -X POST http://localhost:8001/collect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventType": "batch",
+    "sessionId": "test_session", 
+    "siteId": "localhost",
+    "events": [
+      {"eventType": "click", "eventData": {"element": "test1"}},
+      {"eventType": "scroll", "eventData": {"depth": 50}}
+    ]
+  }'
+
+# Verify client attribution
+curl http://localhost:8001/events/recent
+```
+
+### Browser Testing
+1. Open `http://localhost` in browser
+2. Interact with test site elements (click buttons, scroll, fill forms)
+3. Monitor Network tab for `/collect` requests
+4. Verify bulk batching in request payloads
+5. Check event attribution in logs
+
 ## 📊 Monitoring & Operations
 
 ### Health Checks
 ```bash
 # System health
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 
 # Bulk processing verification
 docker compose logs fastapi | grep "Processing batch"
 docker compose logs fastapi | grep "Bulk inserted"
 
 # Client attribution verification
-curl http://localhost:8000/events/recent
+curl http://localhost:8001/events/recent
 ```
 
 ### Performance Monitoring
@@ -147,34 +216,44 @@ GROUP BY client_id, hour
 ORDER BY hour DESC LIMIT 20;"
 
 # S3 export status
-curl http://localhost:8000/export/status
+curl http://localhost:8001/export/status
 ```
 
 ### Troubleshooting
 
-**Bulk Insert Not Working**
+**Events Not Being Collected**
 ```bash
-# Check for batch events
-docker compose logs fastapi | grep "eventType.*batch"
+# Check domain authorization
+curl $PIXEL_MANAGEMENT_URL/api/v1/config/domain/your-domain.com
 
-# Verify bulk processing logs
-docker compose logs fastapi | grep "Bulk inserted"
+# Check browser console for JavaScript errors
 
-# Test batch endpoint directly
-curl -X POST http://localhost:8000/collect -H "Content-Type: application/json" \
-  -d '{"eventType":"batch","sessionId":"test","siteId":"localhost","events":[{"eventType":"click"},{"eventType":"scroll"}]}'
+# Verify pixel accessibility (if using pixel-management)
+curl http://your-vm/pixel/your_client_id/tracking.js
 ```
 
-**Client Attribution Issues**
+**No Client Attribution**
 ```bash
-# Check pixel-management connectivity
-curl $PIXEL_MANAGEMENT_URL/api/v1/config/domain/localhost
+# Verify pixel-management connectivity
+docker compose logs fastapi | grep "pixel-management"
+
+# Check domain in pixel-management system
+# Ensure domain is added to client in admin interface
 
 # Verify client_id in events
-curl http://localhost:8000/events/recent | jq '.[] | select(.client_id != null)'
+curl http://localhost:8001/events/recent | jq '.[] | select(.client_id == null)'
+```
 
-# Check domain authorization logs
-docker compose logs fastapi | grep "Domain.*authorized"
+**Poor Performance Despite Bulk Optimization**
+```bash
+# Verify bulk batching
+docker compose logs fastapi | grep "Processing batch"
+
+# Check batch sizes (should be 5+ events)
+docker compose logs fastapi | grep "batch with" | grep -o "with [0-9]*" | sort | uniq -c
+
+# Monitor for individual event processing (should be minimal)
+docker compose logs fastapi | grep -v "batch" | grep "Processing"
 ```
 
 **Database Performance Issues**
@@ -224,30 +303,41 @@ POSTGRES_WORK_MEM=16MB
 - **Auto-Scaling**: Environment-based resource allocation
 - **Load Balancing**: Multiple VMs behind load balancer for high-volume clients
 
+## 🚀 Production Integration Examples
+
+### Client-Specific VM Deployment
+```html
+<!-- Each client gets dedicated pixel URL -->
+<script src="https://acme-analytics.evothesis.com/pixel/client_acme_corp/tracking.js"></script>
+<script src="https://beta-analytics.evothesis.com/pixel/client_beta_inc/tracking.js"></script>
+```
+
+### Shared Infrastructure Model
+```html
+<!-- Multiple clients share infrastructure with domain isolation -->
+<script src="https://shared-vm.evothesis.com/pixel/client_acme_corp/tracking.js"></script>
+```
+
+### Enterprise Integration
+```javascript
+// Advanced configuration for enterprise clients
+window.EvothesisConfig = {
+  client_id: 'client_enterprise',
+  endpoint: 'https://dedicated-vm.client.com/collect',
+  batch_size: 50,        // Larger batches for high volume
+  flush_interval: 2000,  // Faster flushing for real-time needs
+  privacy_mode: 'hipaa', // Enhanced compliance
+  custom_fields: {
+    tenant_id: 'tenant_123',
+    environment: 'production'
+  }
+};
+```
+
 ## 📚 Documentation
 
 - [API Reference](api/README.md) - FastAPI collection service with bulk optimizations
 - [Database Schema](database/README.md) - PostgreSQL optimization and client attribution
-- [Tracking Pixel](tracking/README.md) - JavaScript library with domain authorization
-
-## 🆘 Support
-
-### Common Issues
-
-**Events Not Attributed to Client**
-- Verify `PIXEL_MANAGEMENT_URL` environment variable
-- Check domain authorization in pixel-management system
-- Ensure pixel URL includes correct client_id
-
-**Poor Performance Despite Bulk Optimization**
-- Verify batch events are being sent (look for `eventType: "batch"`)
-- Check PostgreSQL memory configuration
-- Monitor database connection pool utilization
-
-**S3 Export Failures**
-- Verify S3 credentials and bucket permissions
-- Check export schedule configuration
-- Monitor backup bucket for billing/metering data
 
 ---
 
