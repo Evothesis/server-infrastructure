@@ -1,4 +1,4 @@
-# Create new file: api/app/cors_middleware.py
+# Updated api/app/cors_middleware.py - Fix protocol mismatch
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -22,6 +22,19 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         self.cache_ttl: int = 300  # 5 minutes
         self._lock = threading.Lock()
         
+    def extract_domain_from_origin(self, origin: str) -> str:
+        """Extract domain from origin header (strips protocol and port)"""
+        if not origin:
+            return ""
+        
+        # Remove protocol
+        domain = origin.replace("http://", "").replace("https://", "")
+        
+        # Remove port if present
+        domain = domain.split(":")[0]
+        
+        return domain.lower()
+        
     async def get_allowed_origins(self) -> List[str]:
         """Get allowed origins with thread-safe caching"""
         current_time = time.time()
@@ -32,7 +45,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
                 current_time - self.cache_timestamp < self.cache_ttl):
                 return self.cache.get("domains", [])
         
-        # Fetch from pixel-management (keep existing logic)
+        # Fetch from pixel-management
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
@@ -56,16 +69,9 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Error fetching allowed origins: {e}")
         
-        # Fallback (keep existing)
-        fallback_origins = [
-            "http://localhost:3000",
-            "http://localhost:8080", 
-            "http://localhost:8001",
-            "http://localhost"
-        ]
-        
-        logger.warning("Using fallback CORS origins for development")
-        return fallback_origins
+        # Fail secure - no fallback
+        logger.error("No CORS origins available - denying all cross-origin requests")
+        return []
     
     async def dispatch(self, request: Request, call_next):
         """Handle CORS for all requests"""
@@ -73,21 +79,27 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         
         # Handle preflight requests
         if request.method == "OPTIONS":
-            allowed_origins = await self.get_allowed_origins()
+            allowed_domains = await self.get_allowed_origins()
             
-            if origin in allowed_origins:
-                return Response(
-                    status_code=200,
-                    headers={
-                        "Access-Control-Allow-Origin": origin,
-                        "Access-Control-Allow-Credentials": "true",
-                        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-                        "Access-Control-Max-Age": "3600"
-                    }
-                )
+            if origin:
+                origin_domain = self.extract_domain_from_origin(origin)
+                
+                if origin_domain in allowed_domains:
+                    return Response(
+                        status_code=200,
+                        headers={
+                            "Access-Control-Allow-Origin": origin,
+                            "Access-Control-Allow-Credentials": "true",
+                            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+                            "Access-Control-Max-Age": "3600"
+                        }
+                    )
+                else:
+                    logger.warning(f"CORS preflight rejected for origin: {origin} (domain: {origin_domain})")
+                    return Response(status_code=403)
             else:
-                logger.warning(f"CORS preflight rejected for origin: {origin}")
+                logger.warning("CORS preflight rejected: no origin header")
                 return Response(status_code=403)
         
         # Process actual request
@@ -95,13 +107,14 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         
         # Add CORS headers to response
         if origin:
-            allowed_origins = await self.get_allowed_origins()
+            allowed_domains = await self.get_allowed_origins()
+            origin_domain = self.extract_domain_from_origin(origin)
             
-            if origin in allowed_origins:
+            if origin_domain in allowed_domains:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
                 response.headers["Access-Control-Expose-Headers"] = "X-Client-ID, X-Authorized-Domain, X-Privacy-Level"
             else:
-                logger.warning(f"CORS response blocked for unauthorized origin: {origin}")
+                logger.warning(f"CORS response blocked for unauthorized origin: {origin} (domain: {origin_domain})")
         
         return response
