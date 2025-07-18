@@ -1,10 +1,10 @@
 import os
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from io import StringIO, BytesIO
-import polars as pl
+from io import StringIO
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from sqlalchemy.orm import Session
@@ -15,25 +15,19 @@ from .models import EventLog
 logger = logging.getLogger(__name__)
 
 class S3ExportConfig:
-    """Configuration for S3 export operations"""
+    """Configuration for raw S3 export operations"""
     
     def __init__(self):
-        # Client S3 configuration
-        self.client_bucket = os.getenv("CLIENT_S3_BUCKET")
-        self.client_access_key = os.getenv("CLIENT_S3_ACCESS_KEY")
-        self.client_secret_key = os.getenv("CLIENT_S3_SECRET_KEY")
-        self.client_region = os.getenv("CLIENT_S3_REGION", "us-east-1")
-        
-        # Backup S3 configuration (for metering)
-        self.backup_bucket = os.getenv("BACKUP_S3_BUCKET")
-        self.backup_access_key = os.getenv("BACKUP_S3_ACCESS_KEY")
-        self.backup_secret_key = os.getenv("BACKUP_S3_SECRET_KEY")
-        self.backup_region = os.getenv("BACKUP_S3_REGION", "us-east-1")
+        # Raw S3 configuration - single bucket focus
+        self.raw_bucket = os.getenv("RAW_S3_BUCKET")
+        self.raw_access_key = os.getenv("RAW_S3_ACCESS_KEY")
+        self.raw_secret_key = os.getenv("RAW_S3_SECRET_KEY")
+        self.raw_region = os.getenv("RAW_S3_REGION", "us-east-1")
         
         # Export configuration
-        self.export_format = os.getenv("EXPORT_FORMAT", "json").lower()
-        self.export_schedule = os.getenv("EXPORT_SCHEDULE", "hourly")
-        self.site_id = os.getenv("SITE_ID", "default")
+        self.export_format = "json"  # JSON only for MVP
+        self.export_schedule = "1min"  # 1-minute intervals
+        self.batch_size = int(os.getenv("EXPORT_BATCH_SIZE", "10000"))
         
         # Validation
         self.validate_config()
@@ -42,130 +36,109 @@ class S3ExportConfig:
         """Validate configuration completeness"""
         errors = []
         
-        if not self.client_bucket:
-            errors.append("CLIENT_S3_BUCKET is required")
+        if not self.raw_bucket:
+            errors.append("RAW_S3_BUCKET is required")
         
-        if self.export_format not in ["json", "csv", "parquet"]:
-            errors.append(f"Invalid EXPORT_FORMAT: {self.export_format}")
+        if self.batch_size <= 0:
+            errors.append("EXPORT_BATCH_SIZE must be positive")
         
         if errors:
-            raise ValueError(f"S3 Export configuration errors: {', '.join(errors)}")
+            raise ValueError(f"Raw S3 Export configuration errors: {', '.join(errors)}")
     
-    def get_client_s3_client(self):
-        """Get S3 client for client bucket"""
-        if self.client_access_key and self.client_secret_key:
+    def get_raw_s3_client(self):
+        """Get S3 client for raw bucket"""
+        if self.raw_access_key and self.raw_secret_key:
             return boto3.client(
                 's3',
-                aws_access_key_id=self.client_access_key,
-                aws_secret_access_key=self.client_secret_key,
-                region_name=self.client_region
+                aws_access_key_id=self.raw_access_key,
+                aws_secret_access_key=self.raw_secret_key,
+                region_name=self.raw_region
             )
         else:
             # Use default credentials (IAM role, profile, etc.)
-            return boto3.client('s3', region_name=self.client_region)
-    
-    def get_backup_s3_client(self):
-        """Get S3 client for backup bucket"""
-        if not self.backup_bucket:
-            return None
-            
-        if self.backup_access_key and self.backup_secret_key:
-            return boto3.client(
-                's3',
-                aws_access_key_id=self.backup_access_key,
-                aws_secret_access_key=self.backup_secret_key,
-                region_name=self.backup_region
-            )
-        else:
-            # Use default credentials
-            return boto3.client('s3', region_name=self.backup_region)
+            return boto3.client('s3', region_name=self.raw_region)
 
-class S3Exporter:
-    """Main S3 export functionality"""
+class RawDataExporter:
+    """Raw data export functionality for MVP pipeline"""
     
     def __init__(self, config: S3ExportConfig):
         self.config = config
-        self.client_s3 = config.get_client_s3_client()
-        self.backup_s3 = config.get_backup_s3_client()
+        self.raw_s3 = config.get_raw_s3_client()
+        self.max_retries = 3
+        self.retry_delay = 1  # seconds
     
-    def export_events(self, db: Session, since: Optional[datetime] = None, limit: int = 10000) -> Dict[str, Any]:
-        """Export events to S3 buckets"""
+    def export_raw_events(self, db: Session) -> Dict[str, Any]:
+        """
+        Export unprocessed events to raw S3 bucket
+        Main entry point for 1-minute scheduled exports
+        """
         try:
-            # Get events to export
-            events = self._get_events_for_export(db, since, limit)
+            # Get unprocessed events
+            events = self._get_unprocessed_events(db)
             
             if not events:
                 return {
                     "status": "success",
-                    "message": "No events to export",
+                    "message": "No unprocessed events to export",
                     "events_exported": 0,
                     "export_time": datetime.now(timezone.utc).isoformat()
                 }
             
-            # Generate export data
-            export_data = self._prepare_export_data(events)
+            # Prepare raw export data
+            export_data = self._prepare_raw_export_data(events)
             
-            # Export to client bucket
-            client_upload_result = self._upload_to_s3(
-                self.client_s3,
-                self.config.client_bucket,
-                export_data,
-                "client"
-            )
+            # Upload to raw S3 with retry logic
+            upload_result = self._upload_to_raw_s3_with_retry(export_data)
             
-            # Export to backup bucket (if configured)
-            backup_upload_result = None
-            if self.backup_s3 and self.config.backup_bucket:
-                backup_upload_result = self._upload_to_s3(
-                    self.backup_s3,
-                    self.config.backup_bucket,
-                    export_data,
-                    "backup"
-                )
-            
-            # Update exported_at timestamps
-            event_ids = [event.id for event in events]
-            self._mark_events_exported(db, event_ids)
-            
-            return {
-                "status": "success",
-                "message": f"Exported {len(events)} events successfully",
-                "events_exported": len(events),
-                "export_time": datetime.now(timezone.utc).isoformat(),
-                "client_upload": client_upload_result,
-                "backup_upload": backup_upload_result,
-                "format": self.config.export_format
-            }
+            if upload_result["success"]:
+                # Mark events as processed (will be updated in Task 1.2 for raw_exported_at)
+                event_ids = [event.id for event in events]
+                self._mark_events_raw_exported(db, event_ids)
+                
+                return {
+                    "status": "success",
+                    "message": f"Exported {len(events)} events to raw S3",
+                    "events_exported": len(events),
+                    "export_time": datetime.now(timezone.utc).isoformat(),
+                    "s3_key": upload_result["key"],
+                    "s3_size_bytes": upload_result["size_bytes"]
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"Failed to upload to raw S3: {upload_result['error']}",
+                    "events_exported": 0,
+                    "export_time": datetime.now(timezone.utc).isoformat()
+                }
             
         except Exception as e:
-            logger.error(f"Export failed: {str(e)}")
+            logger.error(f"Raw export failed: {str(e)}")
             return {
                 "status": "error",
-                "message": f"Export failed: {str(e)}",
+                "message": f"Raw export failed: {str(e)}",
                 "events_exported": 0,
                 "export_time": datetime.now(timezone.utc).isoformat()
             }
     
-    def _get_events_for_export(self, db: Session, since: Optional[datetime], limit: int) -> List[EventLog]:
-        """Get events that need to be exported"""
-        query = db.query(EventLog).filter(EventLog.processed_at.is_(None))
+    def _get_unprocessed_events(self, db: Session) -> List[EventLog]:
+        """Get events that haven't been exported to raw S3"""
+        # Use raw_exported_at IS NULL for precise raw export tracking
+        query = db.query(EventLog).filter(EventLog.raw_exported_at.is_(None))
         
-        if since:
-            query = query.filter(EventLog.created_at >= since)
-        
-        # Order by created_at for consistent export order
+        # Order by created_at for consistent processing order
         query = query.order_by(EventLog.created_at)
         
-        return query.limit(limit).all()
+        # Limit batch size for efficient processing
+        return query.limit(self.config.batch_size).all()
     
-    def _prepare_export_data(self, events: List[EventLog]) -> Dict[str, Any]:
-        """Prepare event data for export"""
+    def _prepare_raw_export_data(self, events: List[EventLog]) -> Dict[str, Any]:
+        """Prepare raw event data for S3 export"""
         export_metadata = {
-            "export_id": f"export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+            "export_id": f"raw_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
             "export_time": datetime.now(timezone.utc).isoformat(),
             "event_count": len(events),
-            "format": self.config.export_format,
-            "site_id": self.config.site_id
+            "format": "json",
+            "pipeline_stage": "raw"
         }
         
         if events:
@@ -174,7 +147,7 @@ class S3Exporter:
                 "end": events[-1].created_at.isoformat()
             }
         
-        # Convert events to serializable format
+        # Convert events to raw format (minimal processing)
         event_records = []
         for event in events:
             record = {
@@ -189,6 +162,7 @@ class S3Exporter:
                 "path": event.path,
                 "user_agent": event.user_agent,
                 "ip_address": str(event.ip_address) if event.ip_address else None,
+                "client_id": event.client_id,  # Critical for pipeline processing
                 "created_at": event.created_at.isoformat(),
                 "raw_event_data": event.raw_event_data
             }
@@ -199,109 +173,118 @@ class S3Exporter:
             "events": event_records
         }
     
-    def _upload_to_s3(self, s3_client, bucket: str, export_data: Dict[str, Any], upload_type: str) -> Dict[str, Any]:
-        """Upload export data to S3 bucket"""
+    def _upload_to_raw_s3_with_retry(self, export_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Upload to raw S3 bucket with retry logic"""
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                result = self._upload_to_raw_s3(export_data)
+                if result["success"]:
+                    return result
+                last_error = result.get("error", "Unknown error")
+                
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Raw S3 upload attempt {attempt + 1} failed: {last_error}")
+            
+            # Exponential backoff for retries
+            if attempt < self.max_retries - 1:
+                delay = self.retry_delay * (2 ** attempt)
+                time.sleep(delay)
+        
+        return {
+            "success": False,
+            "error": f"Failed after {self.max_retries} attempts: {last_error}"
+        }
+    
+    def _upload_to_raw_s3(self, export_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Upload export data to raw S3 bucket"""
         try:
-            # Generate S3 key
+            # Generate S3 key with date partitioning for efficient processing
             timestamp = datetime.now(timezone.utc)
-            key = f"analytics/{timestamp.year}/{timestamp.month:02d}/{timestamp.day:02d}/{export_data['export_metadata']['export_id']}.{self.config.export_format}"
+            key = f"raw-events/{timestamp.year}/{timestamp.month:02d}/{timestamp.day:02d}/{export_data['export_metadata']['export_id']}.json"
             
-            # Prepare data based on format
-            if self.config.export_format == "json":
-                content = json.dumps(export_data, indent=2, default=str)
-                content_type = "application/json"
-                
-            elif self.config.export_format == "csv":
-                # Convert events to CSV using Polars
-                df = pl.DataFrame(export_data['events'])
-                csv_buffer = StringIO()
-                df.write_csv(csv_buffer)
-                content = csv_buffer.getvalue()
-                content_type = "text/csv"
-                
-            elif self.config.export_format == "parquet":
-                # Convert events to Parquet using Polars
-                df = pl.DataFrame(export_data['events'])
-                parquet_buffer = BytesIO()
-                df.write_parquet(parquet_buffer)
-                content = parquet_buffer.getvalue()
-                content_type = "application/octet-stream"
+            # Prepare JSON content
+            content = json.dumps(export_data, indent=2, default=str)
+            content_bytes = content.encode('utf-8')
             
-            # Upload to S3
-            if isinstance(content, str):
-                content = content.encode('utf-8')
-            
-            s3_client.put_object(
-                Bucket=bucket,
+            # Upload to raw S3
+            self.raw_s3.put_object(
+                Bucket=self.config.raw_bucket,
                 Key=key,
-                Body=content,
-                ContentType=content_type,
+                Body=content_bytes,
+                ContentType="application/json",
                 Metadata={
                     'export_id': export_data['export_metadata']['export_id'],
                     'event_count': str(export_data['export_metadata']['event_count']),
-                    'export_type': upload_type
+                    'pipeline_stage': 'raw',
+                    'format': 'json'
                 }
             )
             
+            logger.info(f"Successfully uploaded {len(export_data['events'])} events to raw S3: {key}")
+            
             return {
                 "success": True,
-                "bucket": bucket,
+                "bucket": self.config.raw_bucket,
                 "key": key,
-                "size_bytes": len(content),
-                "upload_type": upload_type
+                "size_bytes": len(content_bytes)
             }
             
         except ClientError as e:
-            logger.error(f"S3 upload failed for {upload_type}: {str(e)}")
+            error_msg = f"S3 upload failed: {str(e)}"
+            logger.error(error_msg)
             return {
                 "success": False,
-                "error": str(e),
-                "upload_type": upload_type
+                "error": error_msg
             }
         except Exception as e:
-            logger.error(f"Unexpected error during {upload_type} upload: {str(e)}")
+            error_msg = f"Unexpected error during raw S3 upload: {str(e)}"
+            logger.error(error_msg)
             return {
                 "success": False,
-                "error": f"Unexpected error: {str(e)}",
-                "upload_type": upload_type
+                "error": error_msg
             }
     
-    def _mark_events_exported(self, db: Session, event_ids: List[int]):
-        """Mark events as exported"""
+    def _mark_events_raw_exported(self, db: Session, event_ids: List[int]):
+        """
+        Mark events as raw exported using raw_exported_at timestamp
+        """
         try:
             export_time = datetime.now(timezone.utc)
             db.query(EventLog).filter(EventLog.id.in_(event_ids)).update(
-                {"processed_at": export_time},
+                {"raw_exported_at": export_time},
                 synchronize_session=False
             )
             db.commit()
-            logger.info(f"Marked {len(event_ids)} events as exported")
+            logger.info(f"Marked {len(event_ids)} events as raw exported")
         except Exception as e:
-            logger.error(f"Failed to mark events as exported: {str(e)}")
+            logger.error(f"Failed to mark events as raw exported: {str(e)}")
             db.rollback()
             raise
     
     def get_export_status(self, db: Session) -> Dict[str, Any]:
-        """Get export pipeline status"""
+        """Get raw export pipeline status"""
         try:
-            # Count events by status
+            # Count events by raw export status
             total_events = db.query(EventLog).count()
-            exported_events = db.query(EventLog).filter(EventLog.processed_at.isnot(None)).count()
-            pending_events = total_events - exported_events
+            raw_exported_events = db.query(EventLog).filter(EventLog.raw_exported_at.isnot(None)).count()
+            pending_events = total_events - raw_exported_events
             
-            # Get latest export
-            latest_exported = db.query(EventLog).filter(
-                EventLog.processed_at.isnot(None)
-            ).order_by(EventLog.processed_at.desc()).first()
+            # Get latest raw export
+            latest_raw_exported = db.query(EventLog).filter(
+                EventLog.raw_exported_at.isnot(None)
+            ).order_by(EventLog.raw_exported_at.desc()).first()
             
             return {
                 "total_events": total_events,
-                "exported_events": exported_events,
+                "raw_exported_events": raw_exported_events,
                 "pending_events": pending_events,
-                "latest_export": latest_exported.processed_at.isoformat() if latest_exported else None,
+                "latest_raw_export": latest_raw_exported.raw_exported_at.isoformat() if latest_raw_exported else None,
+                "raw_bucket": self.config.raw_bucket,
                 "export_format": self.config.export_format,
-                "client_bucket": self.config.client_bucket,
-                "backup_bucket": self.config.backup_bucket,
+                "batch_size": self.config.batch_size,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
@@ -312,7 +295,7 @@ class S3Exporter:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
-def create_s3_exporter() -> S3Exporter:
-    """Factory function to create S3Exporter with configuration"""
+def create_raw_data_exporter() -> RawDataExporter:
+    """Factory function to create RawDataExporter with configuration"""
     config = S3ExportConfig()
-    return S3Exporter(config)
+    return RawDataExporter(config)

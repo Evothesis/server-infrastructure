@@ -21,6 +21,7 @@ class EventLog(Base):
     raw_event_data = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     processed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    raw_exported_at = Column(DateTime(timezone=True), nullable=True, index=True)  # NEW: Track raw S3 export
     client_id = Column(String(255), index=True)
     batch_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # ADDED: For bulk processing
     export_status = Column(String(20), default='pending', index=True)  # ADDED: For S3 export tracking

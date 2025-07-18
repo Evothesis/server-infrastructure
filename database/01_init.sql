@@ -14,8 +14,9 @@ CREATE TABLE IF NOT EXISTS events_log (
     raw_event_data JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     processed_at TIMESTAMPTZ,
-    client_id VARCHAR(255),           -- FIXED: Added client attribution column
-    batch_id UUID,                    -- FIXED: Added missing batch_id referenced in README
+    raw_exported_at TIMESTAMPTZ,           -- NEW: Track raw S3 export completion
+    client_id VARCHAR(255),               -- FIXED: Added client attribution column
+    batch_id UUID,                        -- FIXED: Added missing batch_id referenced in README
     export_status VARCHAR(20) DEFAULT 'pending'  -- FIXED: Added missing export_status column
 );
 
@@ -25,6 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_events_log_site_created ON events_log(site_id, cr
 CREATE INDEX IF NOT EXISTS idx_events_log_session ON events_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_event_type ON events_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_log_processed ON events_log(processed_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_raw_exported_at ON events_log(raw_exported_at);  -- NEW: Index for raw export queries
 CREATE INDEX IF NOT EXISTS idx_events_log_client_id ON events_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_visitor_id ON events_log(visitor_id);  -- FIXED: Added missing index
 CREATE INDEX IF NOT EXISTS idx_events_log_created_at ON events_log(created_at);  -- FIXED: Added missing index

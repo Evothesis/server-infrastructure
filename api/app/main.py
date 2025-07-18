@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
-from .s3_export import create_s3_exporter
+from .s3_export import create_raw_data_exporter
 from .rate_limiter import RateLimitMiddleware
 from .cors_middleware import DynamicCORSMiddleware
 from .validation_schemas import CollectionRequest
@@ -341,10 +341,6 @@ async def collect_events(
             db.rollback()
             return {"status": "accepted", "message": "Processing queued"}
         
-        # Trigger S3 export for large batches
-        if len(events_to_insert) >= 5:
-            background_tasks.add_task(s3_exporter.export_events, db)
-        
         return {
             "status": "success", 
             "events_processed": len(events_to_insert),
@@ -399,24 +395,24 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
 # ============================================================================
 
 # Initialize S3 exporter
-s3_exporter = create_s3_exporter()
+raw_data_exporter = create_raw_data_exporter()
 
 @app.post("/export/run")
 async def trigger_export(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Trigger manual S3 export"""
+    """Trigger manual raw S3 export"""
     try:
-        # Run export in background
-        background_tasks.add_task(s3_exporter.export_events, db)
-        return {"message": "Export started", "timestamp": datetime.utcnow().isoformat()}
+        # Run raw export in background
+        background_tasks.add_task(raw_data_exporter.export_raw_events, db)
+        return {"message": "Raw export started", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
-        logger.error(f"Failed to start export: {e}")
-        raise HTTPException(status_code=500, detail="Export failed to start")
+        logger.error(f"Failed to start raw export: {e}")
+        raise HTTPException(status_code=500, detail="Raw export failed to start")
 
 @app.get("/export/status")
-async def get_export_status():
-    """Get export status"""
+async def get_export_status(db: Session = Depends(get_db)):
+    """Get raw export status"""
     try:
-        status = s3_exporter.get_status()
+        status = raw_data_exporter.get_export_status(db)
         return status
     except Exception as e:
         logger.error(f"Failed to get export status: {e}")
