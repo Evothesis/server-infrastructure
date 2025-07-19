@@ -20,10 +20,15 @@ Raw Events (tracking.js)
 │   events_log    │ ← Bulk insert optimization (50-100x faster)
 │   (01_init.sql) │ ← JSONB storage + client_id attribution
 └─────────────────┘
-       ↓ Automated S3 Export (hourly)
+       ↓ Raw Export (1-minute intervals)
 ┌─────────────────┐
-│ Client S3 Bucket│ ← Complete data ownership
-│ + Backup Bucket │ ← Metering and compliance
+│   Raw S3        │ ← Complete backup + processing source
+│ (raw-events/)   │ ← Timestamped JSON with metadata
+└─────────────────┘
+       ↓ Client Processing (privacy filtering)
+┌─────────────────┐
+│ Processed S3    │ ← Client-partitioned delivery
+│ (client_id/)    │ ← GDPR/HIPAA compliant output
 └─────────────────┘
 ```
 
@@ -55,7 +60,10 @@ CREATE TABLE IF NOT EXISTS events_log (
     ip_address INET,                           -- Client IP address
     raw_event_data JSONB NOT NULL,             -- Complete event payload
     created_at TIMESTAMPTZ DEFAULT NOW(),      -- Database insertion time
-    processed_at TIMESTAMPTZ,                  -- S3 export completion timestamp
+    raw_exported_at TIMESTAMPTZ,               -- Raw S3 export timestamp
+    processed_at TIMESTAMPTZ,                  -- Processing completion timestamp
+    export_status VARCHAR(20) DEFAULT 'pending', -- Export pipeline status
+    batch_id UUID,                             -- Batch processing identifier
     client_id VARCHAR(255)                     -- Client attribution via domain resolution
 );
 ```
@@ -68,6 +76,9 @@ CREATE INDEX IF NOT EXISTS idx_events_log_site_created ON events_log(site_id, cr
 CREATE INDEX IF NOT EXISTS idx_events_log_session ON events_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_event_type ON events_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_log_processed ON events_log(processed_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_raw_exported ON events_log(raw_exported_at);
+CREATE INDEX IF NOT EXISTS idx_events_log_export_status ON events_log(export_status);
+CREATE INDEX IF NOT EXISTS idx_events_log_batch_id ON events_log(batch_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_client_id ON events_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_visitor_id ON events_log(visitor_id);
 CREATE INDEX IF NOT EXISTS idx_events_log_created_at ON events_log(created_at);

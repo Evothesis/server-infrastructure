@@ -72,17 +72,29 @@ GET /events/recent?limit=10
 # Recent events with client attribution (debugging)
 ```
 
-### S3 Export Management
+### S3 Pipeline Management
 
 ```http
-POST /export/run?format=json&since=2025-07-11T00:00:00Z
-# Manual export trigger with client-specific configuration
+# Raw Export
+POST /export/run
+# Manual raw export trigger (1-minute scheduled automatic)
 
-GET /export/status
-# Export pipeline status and last export times
+GET /export/status  
+# Raw export status and database metrics
 
 GET /export/config
-# Client export configuration from environment
+# S3 pipeline configuration
+
+# Data Processing
+POST /process/run
+# Manual processing trigger (raw S3 → processed S3)
+
+GET /process/status
+# Processing status and unprocessed file count
+
+# Pipeline Overview
+GET /pipeline/status
+# Complete pipeline status overview
 ```
 
 ## 🏗️ Architecture
@@ -117,9 +129,11 @@ db.commit()  # 20M database transactions (90% reduction)
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/postgres` | PostgreSQL connection |
 | `PIXEL_MANAGEMENT_URL` | Required | Domain authorization service |
-| `CLIENT_S3_BUCKET` | Required | Client data export bucket |
-| `BACKUP_S3_BUCKET` | Required | Backup/metering bucket |
-| `EXPORT_SCHEDULE` | `hourly` | S3 export frequency |
+| `RAW_S3_BUCKET` | Required | Raw data export bucket |
+| `PROCESSED_S3_BUCKET` | Required | Processed data bucket |
+| `RAW_S3_ACCESS_KEY` | Required | Raw S3 credentials |
+| `PROCESSED_S3_ACCESS_KEY` | Required | Processed S3 credentials |
+| `EXPORT_BATCH_SIZE` | `10000` | Pipeline batch size |
 | `ENVIRONMENT` | `development` | Deployment environment |
 
 ### Performance Scaling
@@ -178,6 +192,11 @@ curl -X POST http://localhost:8000/collect \
 # Verify bulk insert in logs
 docker compose logs fastapi | grep "Processing batch"
 docker compose logs fastapi | grep "Bulk inserted"
+
+# Test S3 pipeline
+curl -X POST http://localhost:8000/export/run
+curl -X POST http://localhost:8000/process/run
+curl http://localhost:8000/pipeline/status
 ```
 
 ## 📊 Performance Monitoring
@@ -191,8 +210,9 @@ INFO:app.main:Bulk inserted 4 events for client client_acme_corp from site shop.
 # Client attribution success
 INFO:app.main:Domain shop.acme.com authorized for client client_acme_corp
 
-# S3 export completion
-INFO:app.main:Exported 15000 events to client S3 bucket
+# S3 pipeline completion
+INFO:app.s3_export:Successfully uploaded 13 events to raw S3: raw-events/2025/07/19/raw_export_20250719_152643.json
+INFO:app.s3_processor:Successfully uploaded 13 events for client client_evothesis_admin to processed S3: processed-events/client_evothesis_admin/2025/07/19/processed_20250719_154922.json
 ```
 
 ### Performance Verification

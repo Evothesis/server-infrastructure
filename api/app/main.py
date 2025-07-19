@@ -15,6 +15,8 @@ from typing import Optional, List, Dict, Any, Tuple
 from .database import engine, get_db, DATABASE_URL
 from .models import Base, EventLog
 from .s3_export import create_raw_data_exporter
+from .s3_processor import create_data_processor
+from .database_cleaner import create_database_cleaner
 from .rate_limiter import RateLimitMiddleware
 from .cors_middleware import DynamicCORSMiddleware
 from .validation_schemas import CollectionRequest
@@ -394,8 +396,10 @@ async def get_recent_events(limit: int = 10, db: Session = Depends(get_db)):
 # S3 Export Endpoints (existing functionality)
 # ============================================================================
 
-# Initialize S3 exporter
+# Initialize S3 pipeline components
 raw_data_exporter = create_raw_data_exporter()
+data_processor = create_data_processor()
+database_cleaner = create_database_cleaner()
 
 @app.post("/export/run")
 async def trigger_export(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -422,8 +426,109 @@ async def get_export_status(db: Session = Depends(get_db)):
 async def get_export_config():
     """Get export configuration"""
     try:
-        config = s3_exporter.get_config()
-        return config
+        config = raw_data_exporter.config
+        return {
+            "raw_bucket": config.raw_bucket,
+            "processed_bucket": config.processed_bucket,
+            "export_format": config.export_format,
+            "batch_size": config.batch_size,
+            "export_schedule": config.export_schedule
+        }
     except Exception as e:
         logger.error(f"Failed to get export config: {e}")
         raise HTTPException(status_code=500, detail="Config check failed")
+
+# ============================================================================
+# S3 Processing Endpoints
+# ============================================================================
+
+@app.post("/process/run")
+async def trigger_processing(background_tasks: BackgroundTasks):
+    """Trigger manual S3 raw → processed data processing"""
+    try:
+        # Run processing in background
+        background_tasks.add_task(data_processor.process_raw_files)
+        return {"message": "Data processing started", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"Failed to start data processing: {e}")
+        raise HTTPException(status_code=500, detail="Data processing failed to start")
+
+@app.get("/process/status")
+async def get_processing_status():
+    """Get data processing status"""
+    try:
+        # Check unprocessed files count
+        unprocessed_files = data_processor._get_unprocessed_raw_files()
+        
+        return {
+            "unprocessed_files_count": len(unprocessed_files),
+            "unprocessed_files": unprocessed_files[:10],  # Show first 10 for visibility
+            "raw_bucket": data_processor.config.raw_bucket,
+            "processed_bucket": data_processor.config.processed_bucket,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to get processing status: {e}")
+        raise HTTPException(status_code=500, detail="Processing status check failed")
+
+@app.get("/pipeline/status")
+async def get_pipeline_status(db: Session = Depends(get_db)):
+    """Get complete pipeline status (raw export + processing)"""
+    try:
+        # Get raw export status
+        raw_status = raw_data_exporter.get_export_status(db)
+        
+        # Get processing status
+        unprocessed_files = data_processor._get_unprocessed_raw_files()
+        
+        # Get cleanup status
+        cleanup_status = database_cleaner.get_cleanup_status(db)
+        
+        return {
+            "raw_export": {
+                "total_events": raw_status.get("total_events", 0),
+                "raw_exported_events": raw_status.get("raw_exported_events", 0),
+                "pending_events": raw_status.get("pending_events", 0),
+                "latest_raw_export": raw_status.get("latest_raw_export"),
+                "raw_bucket": raw_status.get("raw_bucket")
+            },
+            "processing": {
+                "unprocessed_files_count": len(unprocessed_files),
+                "processed_bucket": data_processor.config.processed_bucket,
+                "privacy_filtering": "enabled"
+            },
+            "cleanup": {
+                "cleanup_enabled": cleanup_status.get("cleanup_enabled", False),
+                "cleanup_eligible_events": cleanup_status.get("cleanup_eligible_events", 0),
+                "cleanup_delay_hours": cleanup_status.get("cleanup_delay_hours", 1)
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to get pipeline status: {e}")
+        raise HTTPException(status_code=500, detail="Pipeline status check failed")
+
+# ============================================================================
+# Database Cleanup Endpoints
+# ============================================================================
+
+@app.post("/cleanup/run")
+async def trigger_cleanup(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Trigger manual database cleanup of exported events"""
+    try:
+        # Run cleanup in background
+        background_tasks.add_task(database_cleaner.cleanup_exported_events, db)
+        return {"message": "Database cleanup started", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"Failed to start database cleanup: {e}")
+        raise HTTPException(status_code=500, detail="Database cleanup failed to start")
+
+@app.get("/cleanup/status")
+async def get_cleanup_status(db: Session = Depends(get_db)):
+    """Get database cleanup status and metrics"""
+    try:
+        status = database_cleaner.get_cleanup_status(db)
+        return status
+    except Exception as e:
+        logger.error(f"Failed to get cleanup status: {e}")
+        raise HTTPException(status_code=500, detail="Cleanup status check failed")

@@ -15,14 +15,20 @@ from .models import EventLog
 logger = logging.getLogger(__name__)
 
 class S3ExportConfig:
-    """Configuration for raw S3 export operations"""
+    """Configuration for S3 export operations (raw and processed buckets)"""
     
     def __init__(self):
-        # Raw S3 configuration - single bucket focus
+        # Raw S3 configuration
         self.raw_bucket = os.getenv("RAW_S3_BUCKET")
         self.raw_access_key = os.getenv("RAW_S3_ACCESS_KEY")
         self.raw_secret_key = os.getenv("RAW_S3_SECRET_KEY")
         self.raw_region = os.getenv("RAW_S3_REGION", "us-east-1")
+        
+        # Processed S3 configuration
+        self.processed_bucket = os.getenv("PROCESSED_S3_BUCKET")
+        self.processed_access_key = os.getenv("PROCESSED_S3_ACCESS_KEY")
+        self.processed_secret_key = os.getenv("PROCESSED_S3_SECRET_KEY")
+        self.processed_region = os.getenv("PROCESSED_S3_REGION", "us-east-1")
         
         # Export configuration
         self.export_format = "json"  # JSON only for MVP
@@ -39,11 +45,14 @@ class S3ExportConfig:
         if not self.raw_bucket:
             errors.append("RAW_S3_BUCKET is required")
         
+        if not self.processed_bucket:
+            errors.append("PROCESSED_S3_BUCKET is required")
+        
         if self.batch_size <= 0:
             errors.append("EXPORT_BATCH_SIZE must be positive")
         
         if errors:
-            raise ValueError(f"Raw S3 Export configuration errors: {', '.join(errors)}")
+            raise ValueError(f"S3 Export configuration errors: {', '.join(errors)}")
     
     def get_raw_s3_client(self):
         """Get S3 client for raw bucket"""
@@ -57,6 +66,19 @@ class S3ExportConfig:
         else:
             # Use default credentials (IAM role, profile, etc.)
             return boto3.client('s3', region_name=self.raw_region)
+    
+    def get_processed_s3_client(self):
+        """Get S3 client for processed bucket"""
+        if self.processed_access_key and self.processed_secret_key:
+            return boto3.client(
+                's3',
+                aws_access_key_id=self.processed_access_key,
+                aws_secret_access_key=self.processed_secret_key,
+                region_name=self.processed_region
+            )
+        else:
+            # Use default credentials (IAM role, profile, etc.)
+            return boto3.client('s3', region_name=self.processed_region)
 
 class RawDataExporter:
     """Raw data export functionality for MVP pipeline"""

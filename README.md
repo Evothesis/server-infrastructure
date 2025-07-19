@@ -15,10 +15,29 @@
           │                           │                           
           ▼                           ▼                           
     ┌─────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
-    │  Firestore DB   │    │   PostgreSQL        │    │    S3 Export        │
-    │ - Domain index  │    │ - Event storage     │    │ - Client buckets    │
-    │ - Client data   │    │ - Bulk optimized    │    │ - Backup/metering   │
+    │  Firestore DB   │    │   PostgreSQL        │    │    S3 Pipeline      │
+    │ - Domain index  │    │ - Event storage     │    │ - Raw S3 Export     │
+    │ - Client data   │    │ - Bulk optimized    │    │ - Processed S3      │
+    │ - Privacy levels │    │ - Pipeline ready    │    │ - Client delivery   │
     └─────────────────┘    └─────────────────────┘    └─────────────────────┘
+```
+
+## 🔄 Data Processing Pipeline
+
+```
+Raw Export (1min)           Processing                   Client Delivery
+┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
+│   PostgreSQL    │ 1min    │   Raw S3        │ process │ Processed S3    │
+│ ┌─────────────┐ │ ────►   │ ┌─────────────┐ │ ──────► │ ┌─────────────┐ │
+│ │ Event Batch │ │ export  │ │ Raw JSON    │ │ filter  │ │ Client      │ │
+│ │ (client_id) │ │         │ │ (timestamped│ │ privacy │ │ Partitioned │ │
+│ └─────────────┘ │         │ │  & metadata)│ │ levels  │ │ JSON Files  │ │
+│ ┌─────────────┐ │         │ └─────────────┘ │         │ └─────────────┘ │
+│ │Delete after │ │         │ ┌─────────────┐ │         │ ┌─────────────┐ │
+│ │raw_exported │ │         │ │ Multiple    │ │         │ │ GDPR/HIPAA  │ │
+│ └─────────────┘ │         │ │ Clients     │ │         │ │ Compliant   │ │
+└─────────────────┘         │ └─────────────┘ │         │ └─────────────┘ │
+                            └─────────────────┘         └─────────────────┘
 ```
 
 ## 🎯 Core Features
@@ -35,23 +54,33 @@
 - Privacy compliance (GDPR/HIPAA) per client settings
 - Multi-tenant data isolation
 
-**📊 Multi-Tenant Architecture**
+**📊 Multi-Tenant Data Pipeline**
 - Shared infrastructure with client isolation
-- Per-client S3 export configuration
-- Automatic billing event generation
-- Complete data ownership model
+- Client-partitioned S3 processing pipeline  
+- Privacy-compliant data transformation (GDPR/HIPAA)
+- Complete data ownership model with automated delivery
+
+**🔄 S3 Processing Pipeline**
+- **Raw Export**: PostgreSQL → Raw S3 (1-minute intervals)
+- **Processing**: Client partitioning & privacy filtering → Processed S3
+- **Delivery**: EventBridge delivery → Client-owned S3 buckets
+- Atomic processing with metadata tracking and retry logic
 
 ## 📁 Repository Structure
 
 ```
 server-infrastructure/
 ├── api/                    # FastAPI event collection service
+│   └── app/
+│       ├── s3_export.py   # Raw S3 export pipeline
+│       ├── s3_processor.py # Data processing & privacy filtering
+│       └── main.py        # Collection & pipeline endpoints
 ├── database/              # PostgreSQL schema and initialization
 ├── tracking/              # Integration testing demo site
 │   └── testing/           # HTML test files for browser testing
 ├── nginx/                # Reverse proxy configuration
-├── docker-compose.yml    # Service orchestration
-└── .env.development      # Configuration templates
+├── docker-compose.yml    # Service orchestration with S3 pipeline
+└── .env.development      # S3 pipeline configuration
 ```
 
 ## 🚀 Quick Start
@@ -68,19 +97,21 @@ docker compose --env-file .env.development up -d
 # 3. Verify integration
 curl http://localhost:8001/health                    # API health
 curl http://localhost:8001/collect                   # Event collection endpoint
+curl http://localhost:8001/pipeline/status           # S3 pipeline status
 ```
 
 ### Production Deployment
 ```bash
 # 1. Configure client environment
 cp .env.development .env.production
-# Edit with client S3 credentials and pixel-management URL
+# Edit with raw/processed S3 credentials and pixel-management URL
 
 # 2. Deploy with optimization
 docker compose --env-file .env.production up -d
 
-# 3. Verify bulk processing
-docker compose logs fastapi | grep "Bulk inserted"
+# 3. Verify pipeline processing
+docker compose logs fastapi | grep "Successfully uploaded.*raw S3"
+docker compose logs fastapi | grep "Successfully uploaded.*processed S3"
 ```
 
 ## ⚡ Performance Optimizations
@@ -106,6 +137,129 @@ db.commit()  # 20M transactions/month (90% reduction)
 - **Database Load**: 90% reduction in transaction overhead
 - **Scalability**: Handles burst traffic through intelligent batching
 
+## 📦 S3 Data Pipeline & Formats
+
+### Raw Data Export
+**Frequency**: Every 1 minute  
+**Location**: `raw-events/{year}/{month}/{day}/raw_export_{timestamp}.json`  
+**Purpose**: Backup and processing source
+
+**Raw Data Format**:
+```json
+{
+  "export_metadata": {
+    "export_id": "raw_export_20250719_154912",
+    "export_time": "2025-07-19T15:49:12.123456Z",
+    "event_count": 13,
+    "format": "json",
+    "pipeline_stage": "raw",
+    "time_range": {
+      "start": "2025-07-19T15:45:00.000000Z",
+      "end": "2025-07-19T15:49:00.000000Z"
+    }
+  },
+  "events": [
+    {
+      "id": 123,
+      "event_id": "uuid-123-456",
+      "event_type": "page_view",
+      "session_id": "session_abc",
+      "visitor_id": "visitor_xyz",
+      "site_id": "example.com",
+      "timestamp": "2025-07-19T15:47:30.123456Z",
+      "url": "https://example.com/page",
+      "path": "/page",
+      "user_agent": "Mozilla/5.0...",
+      "ip_address": "192.168.1.100",
+      "client_id": "client_evothesis_admin",
+      "created_at": "2025-07-19T15:47:30.123456Z",
+      "raw_event_data": {
+        "referrer": "https://google.com",
+        "page_title": "Example Page"
+      }
+    }
+  ]
+}
+```
+
+### Processed Data
+**Frequency**: On-demand or scheduled  
+**Location**: `processed-events/{client_id}/{year}/{month}/{day}/processed_{timestamp}.json`  
+**Purpose**: Client delivery with privacy compliance
+
+**Processed Data Format**:
+```json
+{
+  "process_metadata": {
+    "process_id": "processed_20250719_154922",
+    "process_time": "2025-07-19T15:49:22.123456Z",
+    "client_id": "client_evothesis_admin",
+    "event_count": 13,
+    "format": "json",
+    "pipeline_stage": "processed",
+    "privacy_level": "gdpr"
+  },
+  "events": [
+    {
+      "id": 123,
+      "event_id": "uuid-123-456",
+      "event_type": "page_view",
+      "session_id": "session_abc",
+      "visitor_id": "visitor_xyz",
+      "site_id": "example.com",
+      "timestamp": "2025-07-19T15:47:30.123456Z",
+      "url": "https://example.com/page",
+      "path": "/page",
+      "user_agent": "Chrome/[VERSION] (anonymized)",
+      "ip_address": "2e0870240092daf4",
+      "client_id": "client_evothesis_admin",
+      "created_at": "2025-07-19T15:47:30.123456Z",
+      "raw_event_data": {
+        "referrer": "https://google.com",
+        "page_title": "Example Page"
+      },
+      "gdpr_processed": true,
+      "ip_anonymized": true
+    }
+  ]
+}
+```
+
+### Privacy Filtering Levels
+
+**Standard (default)**:
+- Basic sensitive data redaction (passwords, SSNs, etc.)
+- Full IP addresses preserved
+- Complete user agent strings
+
+**GDPR Compliance**:
+- IP addresses hashed with SHA-256
+- User agents anonymized to browser family only
+- Enhanced PII redaction
+- `gdpr_processed: true` marker
+
+**HIPAA Compliance**:
+- All GDPR protections plus:
+- Medical/health keyword filtering
+- Enhanced redaction patterns
+- `hipaa_processed: true` and `audit_required: true` markers
+
+### Pipeline Control Endpoints
+
+```bash
+# Raw Export
+POST /export/run              # Trigger manual raw export
+GET  /export/status           # Check export status
+GET  /export/config           # View S3 configuration
+
+# Data Processing
+POST /process/run             # Trigger manual processing
+GET  /process/status          # Check processing status
+
+# Pipeline Overview
+GET  /pipeline/status         # Complete pipeline status
+```
+
 ## 🔧 Integration with Pixel Management System
 
 ### Event Collection Flow
@@ -118,8 +272,21 @@ db.commit()  # 20M transactions/month (90% reduction)
 ```bash
 # Environment variables for pixel-management integration
 PIXEL_MANAGEMENT_URL=https://pixel-management-url.run.app
-CLIENT_S3_BUCKET=client-analytics-bucket
-BACKUP_S3_BUCKET=evothesis-analytics-backup
+
+# S3 Pipeline Configuration
+RAW_S3_BUCKET=securepixel-raw-events
+RAW_S3_REGION=us-east-1
+RAW_S3_ACCESS_KEY=AKIA...
+RAW_S3_SECRET_KEY=...
+
+PROCESSED_S3_BUCKET=securepixel-processed-events
+PROCESSED_S3_REGION=us-east-1
+PROCESSED_S3_ACCESS_KEY=AKIA...
+PROCESSED_S3_SECRET_KEY=...
+
+# Pipeline Settings
+EXPORT_BATCH_SIZE=10000
+EXPORT_FORMAT=json
 ```
 
 ## 🧪 Testing & Development
@@ -149,8 +316,9 @@ docker compose --env-file .env.development up -d
 # Access test site
 open http://localhost
 
-# Monitor event collection
+# Monitor event collection and pipeline
 docker compose logs -f fastapi | grep "Bulk inserted"
+docker compose logs -f fastapi | grep "Successfully uploaded.*S3"
 ```
 
 ### API Testing
@@ -181,6 +349,11 @@ curl -X POST http://localhost:8001/collect \
 
 # Verify client attribution
 curl http://localhost:8001/events/recent
+
+# Test S3 pipeline
+curl -X POST http://localhost:8001/export/run      # Trigger raw export
+curl -X POST http://localhost:8001/process/run     # Trigger processing
+curl http://localhost:8001/pipeline/status         # Check pipeline status
 ```
 
 ### Browser Testing
@@ -189,6 +362,7 @@ curl http://localhost:8001/events/recent
 3. Monitor Network tab for `/collect` requests
 4. Verify bulk batching in request payloads
 5. Check event attribution in logs
+6. Test S3 pipeline processing with generated events
 
 ## 📊 Monitoring & Operations
 
@@ -215,8 +389,10 @@ FROM events_log
 GROUP BY client_id, hour 
 ORDER BY hour DESC LIMIT 20;"
 
-# S3 export status
+# S3 pipeline status
+curl http://localhost:8001/pipeline/status
 curl http://localhost:8001/export/status
+curl http://localhost:8001/process/status
 ```
 
 ### Troubleshooting
